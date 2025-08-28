@@ -31,6 +31,12 @@
                                         placeholder="Masukkan Remark Baru">
                                 </div>
                                 <div class="col-auto">
+                                    <select name="status_ticket" class="form-control">
+                                        <option value="Open">Open</option>
+                                        <option value="Close">Close</option>
+                                    </select>
+                                </div>
+                                <div class="col-auto">
                                     <input type="hidden" name="selected_ids" id="selected-ids">
                                     <button type="submit" class="btn btn-secondary">Update Terpilih</button>
                                 </div>
@@ -86,6 +92,13 @@
                                 <select id="status_site" name="status_site" class="form-control">
                                     <option value="Down">Down</option>
                                     <option value="Up">Up</option>
+                                </select>
+                            </div>
+                            <div class="col-12 mb-4">
+                                <label for="status_ticket" class="form-label">Status Ticket</label>
+                                <select id="status_ticket" name="status_ticket" class="form-control">
+                                    <option value="Open" selected>Open</option>
+                                    <option value="Close">Close</option>
                                 </select>
                             </div>
                             <div class="col-12 mb-4">

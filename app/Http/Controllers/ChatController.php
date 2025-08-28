@@ -13,28 +13,31 @@ class ChatController extends Controller
     {
         $question = $request->input('question');
 
-        // PERBAIKAN 1: Validasi apakah pertanyaan berkaitan dengan data tiket
-        $validationPrompt = "
-Anda adalah asisten yang membantu menentukan apakah sebuah pertanyaan berkaitan dengan data monitoring jaringan/tiket atau bukan.
+        // === PERBAIKAN VALIDASI INTENT (YA/TIDAK) ===
+        $validationSystem = <<<SYS
+        Anda adalah *router* intent yang hanya menjawab "YA" atau "TIDAK".
+        Tujuan: tentukan apakah pertanyaan berkaitan dengan data monitoring jaringan/tiket.
 
-Pertanyaan yang BERKAITAN dengan data tiket contohnya:
-- Pertanyaan tentang site down/up
-- Pertanyaan tentang masalah power/telkom
-- Pertanyaan tentang lokasi/NOP/cluster
-- Pertanyaan tentang jumlah/statistik tiket
-- Pertanyaan tentang tim FOP
-- Pertanyaan tentang status jaringan
+        Kriteria BERKAITAN (jawab "YA"):
+        - Status site (down/up), masalah power/telkom, lokasi/NOP/cluster, jumlah/statistik tiket,
+          tim/penanganan FOP, status jaringan, severity, site class.
 
-Pertanyaan yang TIDAK BERKAITAN contohnya:
-- Pertanyaan tentang programming (Laravel, PHP, dll)
-- Pertanyaan umum (cuaca, politik, dll)
-- Pertanyaan pribadi
-- Definisi teknologi yang tidak berkaitan monitoring
+        Kriteria TIDAK BERKAITAN (jawab "TIDAK"):
+        - Programming (Laravel, PHP, dll), pertanyaan umum (cuaca, politik), pertanyaan pribadi,
+          definisi teknologi non monitoring.
 
-Jawab dengan 'YA' jika pertanyaan berkaitan dengan data tiket/monitoring, atau 'TIDAK' jika tidak berkaitan.
+        Contoh yang BERKAITAN:
+        - "Tampilkan semua site yang sedang mengalami gangguan hari ini"
+        - "Berapa banyak gangguan di 'NOP SURABAYA' saat ini?"
+        - "Tampilkan site down dengan kategori 'Power Issue'"
+        - "Urutkan 10 site paling sering gangguan 3 bulan terakhir"
 
-Pertanyaan: \"$question\"
-";
+        Contoh yang TIDAK BERKAITAN:
+        - "Apa itu controller di Laravel?"
+        - "Cuaca hari ini apa?"
+
+        Jawab tepat "YA" atau "TIDAK".
+        SYS;
 
         try {
             $client = new Client();
@@ -42,18 +45,18 @@ Pertanyaan: \"$question\"
                 'headers' => ['Authorization' => 'Bearer ' . env('OPENAI_API_KEY')],
                 'json' => [
                     'model' => 'gpt-4o',
-                    'messages' => [['role' => 'system', 'content' => $validationPrompt]],
+                    'messages' => [['role' => 'system', 'content' => $validationSystem], ['role' => 'user', 'content' => $question]],
                     'temperature' => 0,
+                    'max_tokens' => 5,
                 ],
             ]);
 
             $validationData = json_decode($validationResponse->getBody()->getContents(), true);
-            $isDataRelated = trim($validationData['choices'][0]['message']['content']);
+            $isDataRelated = strtoupper(trim($validationData['choices'][0]['message']['content'] ?? 'TIDAK'));
 
-            // Jika pertanyaan tidak berkaitan dengan data tiket, berikan respons umum
-            if (strtoupper($isDataRelated) === 'TIDAK') {
+            if ($isDataRelated !== 'YA') {
                 return response()->json([
-                    'answer' => 'Maaf, saya adalah asisten khusus untuk monitoring jaringan dan data tiket. Saya hanya bisa membantu Anda dengan pertanyaan seputar:\n\n• Status site (down/up)\n• Masalah jaringan (power, telkom, dll)\n• Data lokasi dan NOP\n• Statistik tiket\n• Informasi tim FOP\n\nSilakan tanyakan sesuatu tentang data monitoring jaringan Anda.',
+                    'answer' => "Maaf, saya adalah asisten khusus untuk monitoring jaringan dan data tiket. Saya hanya bisa membantu Anda dengan pertanyaan seputar:\n\n• Status site (down/up)\n• Masalah jaringan (power, telkom, dll)\n• Data lokasi dan NOP\n• Statistik tiket\n• Informasi tim FOP\n\nSilakan tanyakan sesuatu tentang data monitoring jaringan Anda.",
                 ]);
             }
         } catch (\Exception $e) {
@@ -61,116 +64,139 @@ Pertanyaan: \"$question\"
             // Jika validasi gagal, lanjutkan ke query (fallback)
         }
 
-        // PERBAIKAN 2: Gunakan struktur tabel yang benar sesuai dengan model Tiket
-        $masterPrompt = "
-# PERAN DAN TUJUAN
-Anda adalah seorang ahli SQL yang bertugas untuk membuat query SQL mentah (raw SQL query) untuk digunakan dalam aplikasi Laravel. Anda akan mengubah pertanyaan bahasa natural menjadi **satu query SQL tunggal** yang siap pakai.
+        // === PERBAIKAN PROMPT SQL: OUTPUT WAJIB JSON {"sql":"..."} ===
+        $masterPrompt = <<<SYS
+        PERAN: Anda ahli SQL. Ubah pertanyaan bahasa natural menjadi **SATU** query SQL mentah MySQL.
+        Output **WAJIB** JSON valid persis: {"sql":"<QUERY>"} tanpa teks lain.
 
-# KONTEKS TABEL DATABASE
-Nama Tabel: `daftar_tiket`
-Kolom yang tersedia:
-- `id` (integer): Primary key auto increment
-- `site_id` (string): Kode unik site
-- `site_class` (string): Kelas site (contoh: Silver, Gold, Platinum)
-- `saverity` (string): Tingkat keparahan (contoh: Low, Medium, High, Critical)
-- `suspect_problem` (string): Kategori masalah (contoh: 'POWER', 'TELKOM')
-- `time_down` (string/numeric): Waktu downtime
-- `status_site` (string): Status site (contoh: 'Down', 'Up')
-- `tim_fop` (string): Tim yang menangani
-- `remark` (string): Catatan tambahan
-- `ticket_swfm` (string): Nomor tiket SWFM
-- `nop` (string): Nama Operator Pendukung atau wilayah (contoh: 'NOP JEMBER', 'NOP SURABAYA')
-- `cluster_to` (string): Nama cluster jaringan (contoh: 'TO JEMBER')
-- `nossa` (string): Informasi Nossa
-- `created_at` (timestamp): Waktu tiket dibuat
-- `updated_at` (timestamp): Waktu tiket diupdate
+        SKEMA TABEL
+        - Tabel: daftar_tiket
+        - Kolom: id, site_id, site_class, savERity (ejaan sebenarnya di DB: "saverity"),
+                 suspect_problem, time_down, status_site, tim_fop, remark, ticket_swfm,
+                 nop, cluster_to, nossa, status_ticket, created_at, updated_at
 
-# ATURAN OUTPUT
-1. **HANYA KODE**: Berikan HANYA kode query SQL mentah tanpa penjelasan, backticks, atau format markdown.
-2. **GUNAKAN KOLOM YANG BENAR**: Pastikan hanya menggunakan kolom yang ada di tabel `daftar_tiket`.
-3. **CASE-INSENSITIVE**: Untuk perbandingan string, gunakan `LOWER()` untuk pencarian tidak sensitif huruf besar/kecil.
-4. **OPERASI TANGGAL**:
-   - \"Hari ini\": `DATE(created_at) = CURDATE()`
-   - \"Bulan ini\": `MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())`
-   - \"Minggu ini\": `YEARWEEK(created_at) = YEARWEEK(CURDATE())`
-5. **GABUNGKAN KONDISI**: Jika ada beberapa kriteria, gunakan `AND` atau `OR` sesuai konteks.
-6. **UNTUK ANALISIS**: Gunakan `COUNT()`, `GROUP BY`, dan `ORDER BY` untuk pertanyaan statistik.
-7. **LIMIT HASIL**: Tambahkan `LIMIT 50` untuk mencegah terlalu banyak data.
-8. **JIKA TIDAK RELEVAN**: Jika pertanyaan tidak bisa diubah menjadi query yang masuk akal, kembalikan string kosong atau 'INVALID'.
+        KETENTUAN WAJIB
+        0) Selalu filter data yang belum terhapus: tambahkan kondisi deleted_at IS NULL.
+        1) Hanya boleh SELECT dari tabel daftar_tiket (tanpa CTE, tanpa menulis ke tabel lain).
+        2) Selalu tambahkan LIMIT 50 di akhir.
+        3) Bandingkan string dengan LOWER(...).
+        4) Tanggal:
+           - "hari ini"   -> DATE(created_at) = CURDATE()
+           - "bulan ini"  -> MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE())
+           - "minggu ini" -> YEARWEEK(created_at)=YEARWEEK(CURDATE())
+        5) Statistik gunakan COUNT()/GROUP BY/ORDER BY sesuai konteks.
+        6) Pemetaan istilah user -> kolom:
+           - "severity" -> savERity (DB: "saverity")
+           - "site class" -> site_class
+           - "status tiket / ticket status" (open/close) -> status_ticket
+           - "status tiket/workflow" (assigned, in progress, canceled, resolved, submitted, escalated)
+               -> cari dengan LOWER(remark) (fallback), atau padankan ke LOWER(status_site) bila cocok.
+        7) Kategori masalah (power, telkom, fiber, cell) -> cari pada LOWER(suspect_problem).
+        8) Jika pertanyaan ambigu tapi relevan, pilih interpretasi umum dan batasi LIMIT 50.
+        9) Jika tidak relevan/invalid -> kembalikan {"sql":""}.
 
-# CONTOH QUERY:
-- \"site down hari ini\": `SELECT * FROM daftar_tiket WHERE LOWER(status_site) = 'down' AND DATE(created_at) = CURDATE() LIMIT 50`
-- \"masalah power\": `SELECT * FROM daftar_tiket WHERE LOWER(suspect_problem) LIKE '%power%' LIMIT 50`
-- \"site di NOP Jember\": `SELECT * FROM daftar_tiket WHERE LOWER(nop) LIKE '%jember%' LIMIT 50`
+        CONTOH
+        - "site down hari ini"
+          -> {"sql":"SELECT * FROM daftar_tiket WHERE LOWER(status_site)='down' AND DATE(created_at)=CURDATE() LIMIT 50"}
+        - "masalah power bulan ini"
+          -> {"sql":"SELECT * FROM daftar_tiket WHERE LOWER(suspect_problem) LIKE '%power%' AND MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE()) LIMIT 50"}
+        - "berapa banyak gangguan di NOP SURABAYA minggu ini"
+          -> {"sql":"SELECT COUNT(*) AS total FROM daftar_tiket WHERE LOWER(nop) LIKE '%surabaya%' AND YEARWEEK(created_at)=YEARWEEK(CURDATE()) LIMIT 50"}
 
----
+        Sekarang ubah pertanyaan berikut ke JSON {"sql": "..."}:
+        SYS;
 
-# PERMINTAAN
-Buatkan query SQL untuk permintaan berikut:
-\"$question\"
-";
-
+        // === PEMANGGILAN API UNTUK SQL + PARSING JSON ===
         $sqlQuery = '';
         try {
-            $client = new Client();
             $response = $client->post('https://api.openai.com/v1/chat/completions', [
                 'headers' => ['Authorization' => 'Bearer ' . env('OPENAI_API_KEY')],
                 'json' => [
                     'model' => 'gpt-4o',
-                    'messages' => [['role' => 'system', 'content' => $masterPrompt]],
+                    'messages' => [['role' => 'system', 'content' => $masterPrompt], ['role' => 'user', 'content' => $question]],
                     'temperature' => 0,
+                    'max_tokens' => 500,
                 ],
             ]);
 
             $data = json_decode($response->getBody()->getContents(), true);
-            $sqlQuery = trim($data['choices'][0]['message']['content']);
+            $raw = trim($data['choices'][0]['message']['content'] ?? '');
 
-            // Bersihkan query dari format markdown atau karakter tidak perlu
-            $sqlQuery = preg_replace('/```sql\s*/', '', $sqlQuery);
-            $sqlQuery = preg_replace('/```\s*/', '', $sqlQuery);
-            $sqlQuery = trim($sqlQuery, " \t\n\r\0\x0B`;'");
+            // Parse JSON {"sql":"..."}
+            $decoded = json_decode($raw, true);
+            if (json_last_error() === JSON_ERROR_NONE && isset($decoded['sql'])) {
+                $sqlQuery = trim((string) $decoded['sql']);
+            } else {
+                // Fallback kalau model masih mengembalikan SQL polos
+                $sqlQuery = preg_replace('/```sql\s*/i', '', $raw);
+                $sqlQuery = preg_replace('/```\s*/', '', $sqlQuery);
+                $sqlQuery = trim($sqlQuery, " \t\n\r\0\x0B`;");
+            }
         } catch (\Exception $e) {
             Log::error('OpenAI API Error: ' . $e->getMessage());
             return response()->json(['answer' => 'Maaf, terjadi kesalahan saat berkomunikasi dengan AI. Silakan coba lagi.']);
         }
 
-        // Validasi query - perbaiki logika untuk mendeteksi query yang tidak valid
+        // === VALIDASI QUERY KETAT ===
         if (empty($sqlQuery) || strlen($sqlQuery) < 15 || strtoupper(trim($sqlQuery)) === 'INVALID') {
-            return response()->json(['answer' => 'Maaf, saya tidak dapat memproses pertanyaan tersebut sebagai query data tiket. Silakan tanyakan hal-hal seperti:\n\n• "tampilkan site down hari ini"\n• "masalah power bulan ini"\n• "berapa total tiket minggu ini"\n• "site di NOP Jakarta yang bermasalah"']);
+            return response()->json(['answer' => "Maaf, saya tidak dapat memproses pertanyaan tersebut sebagai query data tiket. Silakan tanyakan hal-hal seperti:\n\n• \"tampilkan site down hari ini\"\n• \"masalah power bulan ini\"\n• \"berapa total tiket minggu ini\"\n• \"site di NOP Surabaya yang bermasalah\""]);
+        }
+
+        // Hanya SELECT, hanya dari daftar_tiket, tidak boleh statement berbahaya, tidak multi-statement
+        if (!preg_match('/^\s*SELECT\s+/i', $sqlQuery) || !preg_match('/\bFROM\s+daftar_tiket\b/i', $sqlQuery) || preg_match('/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b/i', $sqlQuery) || preg_match('/\bINFORMATION_SCHEMA\b/i', $sqlQuery) || substr_count($sqlQuery, ';') > 0) {
+            Log::warning('Blocked non-SELECT/unsafe query: ' . $sqlQuery);
+            return response()->json(['answer' => 'Maaf, hanya query SELECT ke tabel daftar_tiket yang diizinkan.']);
+        }
+
+        // Pastikan ada LIMIT
+        if (!preg_match('/\bLIMIT\s+\d+\b/i', $sqlQuery)) {
+            $sqlQuery .= ' LIMIT 50';
+        }
+
+        // ⬇️ Inject filter soft delete bila belum ada
+        if (!preg_match('/\bdeleted_at\s+IS\s+NULL\b/i', $sqlQuery)) {
+            if (preg_match('/\bWHERE\b/i', $sqlQuery)) {
+                // sisipkan "AND deleted_at IS NULL" sebelum LIMIT
+                $sqlQuery = preg_replace('/\s+LIMIT\s+(\d+)\s*$/i', ' AND deleted_at IS NULL LIMIT $1', $sqlQuery);
+            } else {
+                // tambahkan WHERE baru sebelum LIMIT
+                $sqlQuery = preg_replace('/\s+LIMIT\s+(\d+)\s*$/i', ' WHERE deleted_at IS NULL LIMIT $1', $sqlQuery);
+            }
         }
 
         try {
             Log::info('Generated SQL Query: ' . $sqlQuery);
-
-            // Validasi query untuk keamanan - pastikan hanya SELECT
-            if (!preg_match('/^\s*SELECT\s+/i', $sqlQuery)) {
-                Log::warning('Non-SELECT query attempted: ' . $sqlQuery);
-                return response()->json(['answer' => 'Maaf, hanya query pencarian data yang diizinkan.']);
-            }
-
             $results = DB::select($sqlQuery);
 
             if (empty($results)) {
                 return response()->json(['answer' => 'Saya sudah mencari di database, namun tidak ada data yang cocok dengan kriteria yang Anda berikan. Coba gunakan kata kunci yang berbeda.']);
             }
 
-            // Format jawaban dengan lebih baik
+            // === FORMAT OUTPUT: kolom prioritas + batasi 10 baris ===
             $formattedAnswer = "Berikut adalah hasil pencarian data tiket:\n\n";
-            $formattedAnswer .= '📊 **Ditemukan ' . count($results) . " data tiket**\n\n";
+            $formattedAnswer .= '📊 **Ditemukan ' . count($results) . " baris**\n\n";
 
-            foreach ($results as $index => $row) {
-                if ($index >= 10) {
-                    // Batasi tampilan maksimal 10 data untuk readability
-                    $formattedAnswer .= '... dan ' . (count($results) - 10) . " data lainnya.\n";
-                    break;
+            $preferredOrder = ['id', 'site_id', 'status_site', 'status_ticket', 'suspect_problem', 'site_class', 'saverity', 'nop', 'cluster_to', 'time_down', 'tim_fop', 'remark', 'ticket_swfm', 'created_at', 'updated_at'];
+
+            $maxShow = min(10, count($results));
+            for ($i = 0; $i < $maxShow; $i++) {
+                $row = (array) $results[$i];
+                $formattedAnswer .= '🎫 **Tiket ' . ($i + 1) . ":**\n";
+                foreach ($preferredOrder as $k) {
+                    if (array_key_exists($k, $row)) {
+                        $label = $this->getColumnLabel($k);
+                        $formattedAnswer .= "• $label: " . ($row[$k] ?? 'N/A') . "\n";
+                        unset($row[$k]);
+                    }
                 }
-
-                $formattedAnswer .= '🎫 **Tiket ' . ($index + 1) . ":**\n";
                 foreach ($row as $key => $value) {
                     $label = $this->getColumnLabel($key);
                     $formattedAnswer .= "• $label: " . ($value ?? 'N/A') . "\n";
                 }
                 $formattedAnswer .= "\n";
+            }
+            if (count($results) > $maxShow) {
+                $formattedAnswer .= '... dan ' . (count($results) - $maxShow) . " baris lainnya.\n";
             }
 
             return response()->json(['answer' => $formattedAnswer]);
@@ -190,6 +216,7 @@ Buatkan query SQL untuk permintaan berikut:
             'suspect_problem' => 'Kategori Masalah',
             'time_down' => 'Waktu Down',
             'status_site' => 'Status Site',
+            'status_ticket' => 'Status Ticket',
             'tim_fop' => 'Tim FOP',
             'remark' => 'Catatan',
             'ticket_swfm' => 'Tiket SWFM',

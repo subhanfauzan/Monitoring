@@ -24,7 +24,15 @@ return new class extends Migration {
             $table->string('nop');
             $table->string('cluster_to');
             $table->string('nossa');
+
+            // ⬇️ TAMBAHAN BARU
+            $table->enum('status_ticket', ['Open', 'Close'])->default('Open');
+
             $table->boolean('lock')->default(0);
+
+            // ⬇️ SOFT DELETES
+            $table->softDeletes();
+
             $table->timestamps();
         });
     }

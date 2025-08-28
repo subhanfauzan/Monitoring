@@ -77,6 +77,13 @@ class TiketDataTable extends DataTable
                     </select>
                     </div>
                     <div class="col-12 mb-4">
+                    <label for="status_ticket" class="form-label float-start">Status Ticket</label>
+                    <select id="status_ticket" name="status_ticket" class="form-control">
+                        <option value="Open"  '.($row->status_ticket == 'Open'  ? 'selected' : '').'>Open</option>
+                        <option value="Close" '.($row->status_ticket == 'Close' ? 'selected' : '').'>Close</option>
+                    </select>
+                    </div>
+                    <div class="col-12 mb-4">
                       <label for="nameBasic" class="form-label float-start">Tim FOP</label>
                       <input value="' .
                     $row->tim_fop .
@@ -185,6 +192,7 @@ class TiketDataTable extends DataTable
             Column::make('suspect_problem'),
             Column::computed('time_down'),
             Column::make('status_site'),
+            Column::make('status_ticket'),
             Column::make('tim_fop'),
             Column::make('remark'),
             Column::make('ticket_swfm'),

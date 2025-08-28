@@ -41,6 +41,7 @@ class ImportTiket implements ToModel
             'nop' => $row[18],
             'cluster_to' => $row[7],
             'nossa' => $row[42],
+            'status_ticket'  => 'Open',
         ]);
     }
 }

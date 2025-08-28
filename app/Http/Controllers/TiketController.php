@@ -61,6 +61,7 @@ class TiketController extends Controller
         $request->validate([
             'site_id' => 'required',
             'time_down' => 'required',
+            'status_ticket' => 'nullable|in:Open,Close',
         ]);
 
         // Parse datetime dengan format yang benar: Y-m-d\TH:i
@@ -94,6 +95,7 @@ class TiketController extends Controller
             'ticket_swfm' => '',
             'nossa' => '',
             'remark' => $request->remark,
+            // 'status_ticket' => $request->input('status_ticket', 'Open'),
         ]);
 
         if ($create) {
@@ -136,10 +138,12 @@ class TiketController extends Controller
     public function update(Request $request, string $id)
     {
         $tiket = Tiket::findOrFail($id);
+
         $tiket->update([
             'status_site' => $request->status_site,
             'tim_fop' => $request->tim_fop,
             'remark' => $request->remark,
+            'status_ticket' => $request->status_ticket ?? $tiket->status_ticket,
         ]);
 
         if ($tiket) {
