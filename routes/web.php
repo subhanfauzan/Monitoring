@@ -5,6 +5,8 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\DapotController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\GeminiChatController;
+use App\Http\Controllers\GeminiController;
 use App\Http\Controllers\NopController;
 use App\Http\Controllers\TiketController;
 use App\Http\Controllers\TiketIssueController;
@@ -74,6 +76,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/chat', function () {
         return view('pages.chat');
     });
-    Route::post('/ask', [ChatController::class, 'askQuestion']);
-});
 
+    Route::post('/chat/ask', [ChatController::class, 'askQuestion'])->name('chat.ask');
+    Route::post('/gemini/ask', [GeminiChatController::class, 'askQuestion'])->name('gemini.ask');
+});

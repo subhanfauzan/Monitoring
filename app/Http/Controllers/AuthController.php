@@ -50,7 +50,7 @@ class AuthController extends Controller
 
     // Logout
     public function logout()
-    {
+    {   
         Auth::logout();
         return redirect()->route('pages.login');
     }
