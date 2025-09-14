@@ -42,14 +42,14 @@
       <p id="answer" class="mt-3 text-gray-700 whitespace-pre-wrap">–</p>
     </div>
 
-    {{-- <div class="bg-gray-50 rounded-lg p-4">
+    <div class="bg-gray-50 rounded-lg p-4">
       <div class="flex justify-between items-center">
         <h2 class="text-lg font-semibold text-gray-800">Debug</h2>
         <button id="toggleDebug"
           class="text-sm px-3 py-1 rounded bg-gray-200 hover:bg-gray-300">Tampilkan/Sembunyikan</button>
       </div>
       <pre id="debugBox" class="mt-3 text-sm text-gray-600 hidden">(kosong)</pre>
-    </div> --}}
+    </div>
   </div>
 
   <script>
