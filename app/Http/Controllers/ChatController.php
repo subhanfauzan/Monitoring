@@ -61,7 +61,7 @@ class ChatController extends Controller
             }
         } catch (\Exception $e) {
             Log::error('Validation API Error: ' . $e->getMessage());
-            // Jika validasi gagal, lanjutkan ke query (fallback)
+            // fallback: lanjut proses
         }
 
         // === PERBAIKAN PROMPT SQL: OUTPUT WAJIB JSON {"sql":"..."} ===
@@ -76,7 +76,6 @@ class ChatController extends Controller
                  nop, cluster_to, nossa, status_ticket, created_at, updated_at
 
         KETENTUAN WAJIB
-        0) Selalu filter data yang belum terhapus: tambahkan kondisi deleted_at IS NULL.
         1) Hanya boleh SELECT dari tabel daftar_tiket (tanpa CTE, tanpa menulis ke tabel lain).
         2) Selalu tambahkan LIMIT 50 di akhir.
         3) Bandingkan string dengan LOWER(...).
@@ -153,23 +152,15 @@ class ChatController extends Controller
             $sqlQuery .= ' LIMIT 50';
         }
 
-        // ⬇️ Inject filter soft delete bila belum ada
-        if (!preg_match('/\bdeleted_at\s+IS\s+NULL\b/i', $sqlQuery)) {
-            if (preg_match('/\bWHERE\b/i', $sqlQuery)) {
-                // sisipkan "AND deleted_at IS NULL" sebelum LIMIT
-                $sqlQuery = preg_replace('/\s+LIMIT\s+(\d+)\s*$/i', ' AND deleted_at IS NULL LIMIT $1', $sqlQuery);
-            } else {
-                // tambahkan WHERE baru sebelum LIMIT
-                $sqlQuery = preg_replace('/\s+LIMIT\s+(\d+)\s*$/i', ' WHERE deleted_at IS NULL LIMIT $1', $sqlQuery);
-            }
-        }
-
         try {
             Log::info('Generated SQL Query: ' . $sqlQuery);
             $results = DB::select($sqlQuery);
 
             if (empty($results)) {
-                return response()->json(['answer' => 'Saya sudah mencari di database, namun tidak ada data yang cocok dengan kriteria yang Anda berikan. Coba gunakan kata kunci yang berbeda.']);
+                return response()->json([
+                    'answer' => 'Saya sudah mencari di database, namun tidak ada data yang cocok dengan kriteria yang Anda berikan. Coba gunakan kata kunci yang berbeda.',
+                    'sql' => $sqlQuery,
+                ]);
             }
 
             // === FORMAT OUTPUT: kolom prioritas + batasi 10 baris ===
@@ -199,10 +190,16 @@ class ChatController extends Controller
                 $formattedAnswer .= '... dan ' . (count($results) - $maxShow) . " baris lainnya.\n";
             }
 
-            return response()->json(['answer' => $formattedAnswer]);
+            return response()->json([
+                'answer' => $formattedAnswer,
+                'sql' => $sqlQuery,
+            ]);
         } catch (\Exception $e) {
             Log::error('Database Query Error: ' . $e->getMessage() . ' | Failed Query: ' . $sqlQuery);
-            return response()->json(['answer' => 'Maaf, terjadi kesalahan saat mengambil data dari database. Query yang dihasilkan mungkin tidak valid. Tim teknis sudah diberitahu untuk memperbaiki masalah ini.']);
+            return response()->json([
+                'answer' => 'Maaf, terjadi kesalahan saat mengambil data dari database. Query yang dihasilkan mungkin tidak valid.',
+                'sql' => $sqlQuery,
+            ]);
         }
     }
 

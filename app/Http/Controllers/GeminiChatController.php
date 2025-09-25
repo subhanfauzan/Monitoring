@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use App\Services\GeminiService;
 
 class GeminiChatController extends Controller
@@ -34,7 +33,7 @@ class GeminiChatController extends Controller
             return trim($raw);
         };
 
-        // ========== 1) VALIDASI INTENT (pakai LLM + bias heuristik) ==========
+        // ========== 1) VALIDASI INTENT ==========
         $monitoringKeywords = ['site', 'down', 'up', 'tiket', 'ticket', 'gangguan', 'power', 'telkom', 'fiber', 'fop', 'nop', 'cluster', 'severity', 'saverity', 'site class', 'status', 'nossa', 'berapa', 'jumlah', 'total', 'statistik', 'minggu', 'bulan', 'hari'];
         $hit = false;
         foreach ($monitoringKeywords as $kw) {
@@ -78,6 +77,7 @@ class GeminiChatController extends Controller
             ]);
         }
 
+        // ========== 2) PROMPT SQL ==========
         $askTotalDown = preg_match('/\b(berapa|jumlah|total)\b.*\bsite\b.*\bdown\b/i', $question);
         $hasQualifier = preg_match('/\b(nop|cluster|site\s*class|severity|saverity|power|telkom|fiber|cell|hari|minggu|bulan)\b/i', $question);
 
@@ -96,17 +96,14 @@ class GeminiChatController extends Controller
             Aturan:
             - Hanya SELECT dari daftar_tiket, akhiri LIMIT 50.
             - Bandingkan string pakai LOWER(...).
-            - Tanggal: "hari ini"=DATE(created_at)=CURDATE(); "bulan ini"=MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE());
+            - Tanggal: "hari ini"=DATE(created_at)=CURDATE();
+              "bulan ini"=MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE());
               "minggu ini"=YEARWEEK(created_at)=YEARWEEK(CURDATE()).
             - Mapping: severity→saverity; site class→site_class; status tiket→status_ticket (fallback remark);
               power/telkom/fiber/cell→LIKE pada LOWER(suspect_problem).
             - Kata kunci jumlah/total/berapa: gunakan COUNT(*) AS total.
             - Jika ambigu tetapi relevan, pilih interpretasi paling umum dan tetap LIMIT 50.
             - Jika tidak relevan, kembalikan {"sql":""}.
-
-            Contoh:
-            - "berapa total site down?" , "berapa site down dengan NOP Surabaya?"
-              -> {"sql":"SELECT COUNT(*) AS total FROM daftar_tiket WHERE LOWER(status_site)='down' LIMIT 50", "sql":"SELECT COUNT(*) AS total FROM daftar_tiket WHERE LOWER(status_site)='down' AND LOWER(nop) LIKE '%surabaya%' LIMIT 50"}
             SYS;
 
             try {
@@ -136,7 +133,7 @@ class GeminiChatController extends Controller
             }
         }
 
-        // ========== 3) VALIDASI SQL & soft-delete ==========
+        // ========== 3) VALIDASI SQL ==========
         if ($sqlQuery === '' || strlen($sqlQuery) < 15 || !preg_match('/^\s*SELECT\s+/i', $sqlQuery) || !preg_match('/\bFROM\s+daftar_tiket\b/i', $sqlQuery)) {
             return response()->json(
                 [
@@ -154,15 +151,6 @@ class GeminiChatController extends Controller
             $sqlQuery .= ' LIMIT 50';
         }
 
-        $hasDeletedAt = Schema::hasColumn('daftar_tiket', 'deleted_at');
-        if ($hasDeletedAt && !preg_match('/\bdeleted_at\s+IS\s+NULL\b/i', $sqlQuery)) {
-            if (preg_match('/\bWHERE\b/i', $sqlQuery)) {
-                $sqlQuery = preg_replace('/\s+LIMIT\s+(\d+)\s*$/i', ' AND deleted_at IS NULL LIMIT $1', $sqlQuery);
-            } else {
-                $sqlQuery = preg_replace('/\s+LIMIT\s+(\d+)\s*$/i', ' WHERE deleted_at IS NULL LIMIT $1', $sqlQuery);
-            }
-        }
-
         if (preg_match('/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b/i', $sqlQuery) || preg_match('/\bINFORMATION_SCHEMA\b/i', $sqlQuery) || substr_count($sqlQuery, ';') > 0) {
             Log::warning('Blocked unsafe SQL (Gemini): ' . $sqlQuery);
             return response()->json(['answer' => 'Maaf, hanya query SELECT ke tabel daftar_tiket yang diizinkan.'], 200);
@@ -174,13 +162,25 @@ class GeminiChatController extends Controller
             $results = DB::select($sqlQuery);
 
             if (empty($results)) {
-                return response()->json(['answer' => 'Tidak ada data yang cocok dengan kriteria. Coba kata kunci lain.'], 200);
+                return response()->json(
+                    [
+                        'answer' => 'Tidak ada data yang cocok dengan kriteria. Coba kata kunci lain.',
+                        'sql' => $sqlQuery,
+                    ],
+                    200,
+                );
             }
 
-            // Jika query COUNT(*) AS total → kirim angka saja (cocok buat UI kamu)
+            // Jika query COUNT(*) AS total
             $first = (array) $results[0];
             if (array_key_exists('total', $first) && count($results) === 1 && count($first) === 1) {
-                return response()->json(['answer' => (string) $first['total']], 200);
+                return response()->json(
+                    [
+                        'answer' => (string) $first['total'],
+                        'sql' => $sqlQuery,
+                    ],
+                    200,
+                );
             }
 
             $preferredOrder = ['id', 'site_id', 'status_site', 'status_ticket', 'suspect_problem', 'site_class', 'saverity', 'nop', 'cluster_to', 'time_down', 'tim_fop', 'remark', 'ticket_swfm', 'created_at', 'updated_at'];
@@ -207,7 +207,13 @@ class GeminiChatController extends Controller
                 $out .= '... dan ' . (count($results) - $maxShow) . " baris lainnya.\n";
             }
 
-            return response()->json(['answer' => $out], 200);
+            return response()->json(
+                [
+                    'answer' => $out,
+                    'sql' => $sqlQuery,
+                ],
+                200,
+            );
         } catch (\Throwable $e) {
             Log::error('DB Error (Gemini): ' . $e->getMessage(), ['sql' => $sqlQuery]);
             return response()->json(

@@ -152,27 +152,23 @@ class TiketController extends Controller
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
     public function destroy(string $id)
     {
         try {
             $tiket = Tiket::findOrFail($id);
 
-            // Cek apakah tiket terkunci
             if ($tiket->lock == 1) {
                 return response()->json(
                     [
                         'success' => false,
                         'message' => 'Data tidak bisa dihapus karena statusnya terkunci!',
-                        'lock' => true, // Tambahkan flag untuk memberi tahu bahwa statusnya terkunci
+                        'lock' => true,
                     ],
                     400,
                 );
             }
 
-            $tiket->delete();
+            $this->archiveAndDelete($tiket);
 
             return response()->json(['success' => true]);
         } catch (\Exception $e) {
@@ -195,16 +191,13 @@ class TiketController extends Controller
             // Initialize a counter to track the number of successfully deleted tickets
             $deletedCount = 0;
 
-            // Loop through each ticket and check if it is locked
             foreach ($tikets as $tiket) {
                 if ($tiket->lock == 1) {
-                    // If ticket is locked, skip it and return a message about it
-                    continue; // Skip the deletion of this ticket
+                    continue;
                 }
 
-                // Delete the ticket if it's not locked
-                $tiket->delete();
-                $deletedCount++; // Increment the counter for deleted tickets
+                $this->archiveAndDelete($tiket);
+                $deletedCount++;
             }
 
             // If we deleted some tickets, return success, otherwise inform about locked tickets
@@ -248,16 +241,13 @@ class TiketController extends Controller
             // Initialize a counter to track the number of successfully deleted tickets
             $deletedCount = 0;
 
-            // Loop through each ticket and check if it is locked
             foreach ($tikets as $tiket) {
                 if ($tiket->lock == 1) {
-                    // If ticket is locked, skip it and return a message about it
-                    continue; // Skip the deletion of this ticket
+                    continue;
                 }
 
-                // Delete the ticket if it's not locked
-                $tiket->delete();
-                $deletedCount++; // Increment the counter for deleted tickets
+                $this->archiveAndDelete($tiket);
+                $deletedCount++;
             }
 
             // If we deleted some tickets, return success, otherwise inform about locked tickets
@@ -354,5 +344,22 @@ class TiketController extends Controller
         Tiket::whereIn('id', $ids)->update($updateData);
 
         return redirect()->back()->with('success', 'Data berhasil diupdate!');
+    }
+
+    private function archiveAndDelete(\App\Models\Tiket $tiket): void
+    {
+        DB::transaction(function () use ($tiket) {
+            // ambil seluruh atribut tiket, buang id agar auto-increment di tabel arsip
+            $data = $tiket->getAttributes();
+            unset($data['id']);
+
+            // opsional: simpan kapan dihapus
+            $data['deleted_at'] = now();
+
+            // simpan ke tabel arsip
+            DB::table('tikethapus')->insert($data);
+
+            $tiket->forceDelete();
+        });
     }
 }

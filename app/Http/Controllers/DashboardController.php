@@ -13,9 +13,9 @@ class DashboardController extends Controller
      */
     public function index()
     {
-        $totaltiket = Tiket::count();
-        $totalCritical = Tiket::where('saverity', 'Critical')->count();
-        $totalMajor = Tiket::where('saverity', 'Major')->count();
+        $totaltiket = DB::table('daftar_tiket')->count();
+        $totalCritical = DB::table('daftar_tiket')->where('saverity', 'Critical')->count();
+        $totalMajor = DB::table('daftar_tiket')->where('saverity', 'Major')->count();
         // $chartData = Tiket::select('site_class', DB::raw('count(*) as total'))
         // ->groupBy('site_class')
         // ->orderBy('site_class')
@@ -23,8 +23,9 @@ class DashboardController extends Controller
 
         // WHEN MOD(time_down * 24, 24) >= 22 OR MOD(time_down * 24, 24) < 2 THEN '00:00'
         // Pendekatan menggunakan FLOOR() dan MOD() untuk ekstrak jam langsung dari nilai numerik
-        $rows = Tiket::select(
-            DB::raw("
+        $rows = DB::table('daftar_tiket')
+            ->select(
+                DB::raw("
     CASE
         WHEN MOD(time_down * 24, 24) >= 2 AND MOD(time_down * 24, 24) < 4 THEN '04:00'
         WHEN MOD(time_down * 24, 24) >= 4 AND MOD(time_down * 24, 24) < 6 THEN '06:00'
@@ -36,13 +37,13 @@ class DashboardController extends Controller
         WHEN MOD(time_down * 24, 24) >= 16 AND MOD(time_down * 24, 24) < 18 THEN '18:00'
         WHEN MOD(time_down * 24, 24) >= 18 AND MOD(time_down * 24, 24) < 20 THEN '20:00'
         WHEN MOD(time_down * 24, 24) >= 20 AND MOD(time_down * 24, 24) < 22 THEN '22:00'
-        WHEN MOD(time_down * 24, 24) >= 22 AND MOD(time_down * 24, 24) < 00 THEN '00:00'
-        WHEN MOD(time_down * 24, 24) >= 00 AND MOD(time_down * 24, 24) < 2 THEN '02:00'
+        WHEN MOD(time_down * 24, 24) >= 0 AND MOD(time_down * 24, 24) < 2 THEN '02:00'
+        WHEN MOD(time_down * 24, 24) >= 22 OR MOD(time_down * 24, 24) < 0 THEN '00:00'
     END as hour_slot
     "),
-            DB::raw('UPPER(site_class) as site_class'),
-            DB::raw('COUNT(*) as total'),
-        )
+                DB::raw('UPPER(site_class) as site_class'),
+                DB::raw('COUNT(*) as total'),
+            )
             ->whereNotNull('time_down')
             ->groupBy(DB::raw('hour_slot'), DB::raw('UPPER(site_class)'))
             ->orderBy('hour_slot')
