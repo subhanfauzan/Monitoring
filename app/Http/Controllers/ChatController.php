@@ -2,18 +2,76 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
+use App\Models\AiQueryReview;
 use GuzzleHttp\Client;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ChatController extends Controller
 {
+    /**
+     * Human oversight helper: klasifikasi risiko query
+     */
+    private function assessRisk(string $sql): string
+    {
+        $normalized = strtolower($sql);
+
+        // Query yang sangat berbahaya (sebenarnya sudah diblok di validator, tapi kita double check)
+        if (str_contains($normalized, ' drop ')
+            || str_contains($normalized, ' truncate ')
+            || str_contains($normalized, ' alter table ')
+            || str_contains($normalized, ' information_schema ')
+        ) {
+            return 'high';
+        }
+
+        // Karena kita hanya mengizinkan SELECT, kasus UPDATE/DELETE harusnya sudah tertolak.
+        // Tapi kalau sampai lolos, anggap high.
+        if (preg_match('/\b(update|delete|insert|create|replace|grant|revoke)\b/', $normalized)) {
+            return 'high';
+        }
+
+        // SELECT besar tanpa LIMIT → medium
+        if (preg_match('/\bselect\b/', $normalized) && !preg_match('/\blimit\s+\d+/i', $normalized)) {
+            return 'medium';
+        }
+
+        return 'low';
+    }
+
+    /**
+     * Human oversight helper: boleh akses schema apa saja
+     * Untuk sekarang: hanya tabel daftar_tiket.
+     */
+    private function isSafeSchema(string $sql): bool
+    {
+        $normalized = strtolower($sql);
+
+        // Harus dari daftar_tiket
+        if (!preg_match('/\bfrom\s+daftar_tiket\b/', $normalized)) {
+            return false;
+        }
+
+        // Tidak boleh sentuh information_schema, sys, dll
+        if (preg_match('/\binformation_schema\b/', $normalized)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Step 1: Generate SQL dari LLM + simpan sebagai review (BELUM eksekusi)
+     */
     public function askQuestion(Request $request)
     {
         $question = $request->input('question');
 
-        // === PERBAIKAN VALIDASI INTENT (YA/TIDAK) ===
+        $client = new Client(); // dipakai untuk dua panggilan OpenAI
+
+        // === VALIDASI INTENT (YA/TIDAK) ===
         $validationSystem = <<<SYS
         Anda adalah *router* intent yang hanya menjawab "YA" atau "TIDAK".
         Tujuan: tentukan apakah pertanyaan berkaitan dengan data monitoring jaringan/tiket.
@@ -40,12 +98,16 @@ class ChatController extends Controller
         SYS;
 
         try {
-            $client = new Client();
             $validationResponse = $client->post('https://api.openai.com/v1/chat/completions', [
-                'headers' => ['Authorization' => 'Bearer ' . env('OPENAI_API_KEY')],
+                'headers' => [
+                    'Authorization' => 'Bearer ' . env('OPENAI_API_KEY'),
+                ],
                 'json' => [
                     'model' => 'gpt-4o',
-                    'messages' => [['role' => 'system', 'content' => $validationSystem], ['role' => 'user', 'content' => $question]],
+                    'messages' => [
+                        ['role' => 'system', 'content' => $validationSystem],
+                        ['role' => 'user', 'content' => $question],
+                    ],
                     'temperature' => 0,
                     'max_tokens' => 5,
                 ],
@@ -61,10 +123,10 @@ class ChatController extends Controller
             }
         } catch (\Exception $e) {
             Log::error('Validation API Error: ' . $e->getMessage());
-            // fallback: lanjut proses
+            // fallback: lanjut proses seperti biasa
         }
 
-        // === PERBAIKAN PROMPT SQL: OUTPUT WAJIB JSON {"sql":"..."} ===
+        // === PROMPT SQL: OUTPUT WAJIB JSON {"sql":"..."} ===
         $masterPrompt = <<<SYS
         PERAN: Anda ahli SQL. Ubah pertanyaan bahasa natural menjadi **SATU** query SQL mentah MySQL.
         Output **WAJIB** JSON valid persis: {"sql":"<QUERY>"} tanpa teks lain.
@@ -107,12 +169,18 @@ class ChatController extends Controller
 
         // === PEMANGGILAN API UNTUK SQL + PARSING JSON ===
         $sqlQuery = '';
+
         try {
             $response = $client->post('https://api.openai.com/v1/chat/completions', [
-                'headers' => ['Authorization' => 'Bearer ' . env('OPENAI_API_KEY')],
+                'headers' => [
+                    'Authorization' => 'Bearer ' . env('OPENAI_API_KEY'),
+                ],
                 'json' => [
                     'model' => 'gpt-4o',
-                    'messages' => [['role' => 'system', 'content' => $masterPrompt], ['role' => 'user', 'content' => $question]],
+                    'messages' => [
+                        ['role' => 'system', 'content' => $masterPrompt],
+                        ['role' => 'user', 'content' => $question],
+                    ],
                     'temperature' => 0,
                     'max_tokens' => 500,
                 ],
@@ -133,18 +201,30 @@ class ChatController extends Controller
             }
         } catch (\Exception $e) {
             Log::error('OpenAI API Error: ' . $e->getMessage());
-            return response()->json(['answer' => 'Maaf, terjadi kesalahan saat berkomunikasi dengan AI. Silakan coba lagi.']);
+            return response()->json([
+                'answer' => 'Maaf, terjadi kesalahan saat berkomunikasi dengan AI. Silakan coba lagi.',
+            ]);
         }
 
-        // === VALIDASI QUERY KETAT ===
+        // === VALIDASI QUERY KETAT (SEBELUM DISIMPAN) ===
         if (empty($sqlQuery) || strlen($sqlQuery) < 15 || strtoupper(trim($sqlQuery)) === 'INVALID') {
-            return response()->json(['answer' => "Maaf, saya tidak dapat memproses pertanyaan tersebut sebagai query data tiket. Silakan tanyakan hal-hal seperti:\n\n• \"tampilkan site down hari ini\"\n• \"masalah power bulan ini\"\n• \"berapa total tiket minggu ini\"\n• \"site di NOP Surabaya yang bermasalah\""]);
+            return response()->json([
+                'answer' => "Maaf, saya tidak dapat memproses pertanyaan tersebut sebagai query data tiket. Silakan tanyakan hal-hal seperti:\n\n• \"tampilkan site down hari ini\"\n• \"masalah power bulan ini\"\n• \"berapa total tiket minggu ini\"\n• \"site di NOP Surabaya yang bermasalah\"",
+            ]);
         }
 
-        // Hanya SELECT, hanya dari daftar_tiket, tidak boleh statement berbahaya, tidak multi-statement
-        if (!preg_match('/^\s*SELECT\s+/i', $sqlQuery) || !preg_match('/\bFROM\s+daftar_tiket\b/i', $sqlQuery) || preg_match('/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b/i', $sqlQuery) || preg_match('/\bINFORMATION_SCHEMA\b/i', $sqlQuery) || substr_count($sqlQuery, ';') > 0) {
-            Log::warning('Blocked non-SELECT/unsafe query: ' . $sqlQuery);
-            return response()->json(['answer' => 'Maaf, hanya query SELECT ke tabel daftar_tiket yang diizinkan.']);
+        // Harus SELECT, hanya dari daftar_tiket, tidak boleh statement berbahaya, tidak multi-statement
+        if (!preg_match('/^\s*SELECT\s+/i', $sqlQuery)
+            || !preg_match('/\bFROM\s+daftar_tiket\b/i', $sqlQuery)
+            || preg_match('/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b/i', $sqlQuery)
+            || preg_match('/\bINFORMATION_SCHEMA\b/i', $sqlQuery)
+            || substr_count($sqlQuery, ';') > 0
+        ) {
+            Log::warning('Blocked non-SELECT/unsafe query (pre-save): ' . $sqlQuery);
+
+            return response()->json([
+                'answer' => 'Maaf, hanya query SELECT ke tabel daftar_tiket yang diizinkan.',
+            ]);
         }
 
         // Pastikan ada LIMIT
@@ -152,76 +232,177 @@ class ChatController extends Controller
             $sqlQuery .= ' LIMIT 50';
         }
 
-        try {
-            Log::info('Generated SQL Query: ' . $sqlQuery);
-            $results = DB::select($sqlQuery);
+        // === HUMAN OVERSIGHT: simpan ke tabel review (BELUM dieksekusi) ===
+        $riskLevel = $this->assessRisk($sqlQuery);
+        $user = Auth::user();
 
-            if (empty($results)) {
-                return response()->json([
-                    'answer' => 'Saya sudah mencari di database, namun tidak ada data yang cocok dengan kriteria yang Anda berikan. Coba gunakan kata kunci yang berbeda.',
-                    'sql' => $sqlQuery,
-                ]);
-            }
+        $review = AiQueryReview::create([
+            'user_id'       => $user?->id,
+            'provider'      => 'openai-gpt-4o',
+            'user_question' => $question,
+            'generated_sql' => $sqlQuery,
+            'risk_level'    => $riskLevel,
+            'status'        => 'ready', // bisa ubah ke 'pending' kalau mau ada approve admin dulu
+            'meta'          => [
+                'source' => 'chatbot_monitoring',
+            ],
+        ]);
 
-            // === FORMAT OUTPUT: kolom prioritas + batasi 10 baris ===
-            $formattedAnswer = "Berikut adalah hasil pencarian data tiket:\n\n";
-            $formattedAnswer .= '📊 **Ditemukan ' . count($results) . " baris**\n\n";
+        // Respon ke frontend: user / admin lihat dulu SQL-nya, baru panggil /execute
+        return response()->json([
+            'mode'        => 'preview',
+            'message'     => 'Query berhasil dibuat, silakan review sebelum dijalankan.',
+            'sql_preview' => $sqlQuery,
+            'risk_level'  => $riskLevel,
+            'review_id'   => $review->id,
+        ]);
+    }
 
-            $preferredOrder = ['id', 'site_id', 'status_site', 'status_ticket', 'suspect_problem', 'site_class', 'saverity', 'nop', 'cluster_to', 'time_down', 'tim_fop', 'remark', 'ticket_swfm', 'created_at', 'updated_at'];
+    /**
+     * Step 2: Eksekusi query yang sudah direview (human oversight)
+     * Route contoh: POST /chat/execute/{id}
+     */
+    public function executeReview(Request $request, $id)
+    {
+        $user = Auth::user();
+        $review = AiQueryReview::findOrFail($id);
 
-            $maxShow = min(10, count($results));
-            for ($i = 0; $i < $maxShow; $i++) {
-                $row = (array) $results[$i];
-                $formattedAnswer .= '🎫 **Tiket ' . ($i + 1) . ":**\n";
-                foreach ($preferredOrder as $k) {
-                    if (array_key_exists($k, $row)) {
-                        $label = $this->getColumnLabel($k);
-                        $formattedAnswer .= "• $label: " . ($row[$k] ?? 'N/A') . "\n";
-                        unset($row[$k]);
-                    }
-                }
-                foreach ($row as $key => $value) {
-                    $label = $this->getColumnLabel($key);
-                    $formattedAnswer .= "• $label: " . ($value ?? 'N/A') . "\n";
-                }
-                $formattedAnswer .= "\n";
-            }
-            if (count($results) > $maxShow) {
-                $formattedAnswer .= '... dan ' . (count($results) - $maxShow) . " baris lainnya.\n";
-            }
+        // Cek status
+        if ($review->status === 'executed') {
+            return response()->json([
+                'answer' => 'Query ini sudah pernah dieksekusi.',
+                'sql'    => $review->generated_sql,
+            ]);
+        }
+
+        if ($review->status === 'rejected') {
+            return response()->json([
+                'answer' => 'Query ini sudah ditolak dan tidak dapat dieksekusi.',
+            ], 400);
+        }
+
+        $sqlQuery = $review->generated_sql;
+
+        // Double-check safety sebelum eksekusi
+        if (!preg_match('/^\s*SELECT\s+/i', $sqlQuery)
+            || !$this->isSafeSchema($sqlQuery)
+            || preg_match('/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|GRANT|REVOKE)\b/i', $sqlQuery)
+            || substr_count($sqlQuery, ';') > 0
+        ) {
+            Log::warning('Blocked non-SELECT/unsafe query at execute: ' . $sqlQuery);
+
+            $review->update([
+                'status'       => 'rejected',
+                'reviewer_id'  => $user?->id,
+                'reviewed_at'  => now(),
+                'error_message'=> 'Unsafe query saat eksekusi',
+            ]);
 
             return response()->json([
-                'answer' => $formattedAnswer,
-                'sql' => $sqlQuery,
+                'answer' => 'Maaf, query ini dianggap tidak aman dan diblokir saat eksekusi.',
+            ], 400);
+        }
+
+        // Pastikan masih ada LIMIT
+        if (!preg_match('/\bLIMIT\s+\d+\b/i', $sqlQuery)) {
+            $sqlQuery .= ' LIMIT 50';
+        }
+
+        try {
+            Log::info('Executing SQL from review #' . $review->id . ': ' . $sqlQuery);
+
+            $results = DB::select($sqlQuery);
+
+            // Format jawaban sama seperti sebelumnya
+            if (empty($results)) {
+                $answer = 'Saya sudah mencari di database, namun tidak ada data yang cocok dengan kriteria yang Anda berikan. Coba gunakan kata kunci yang berbeda.';
+            } else {
+                $answer = "Berikut adalah hasil pencarian data tiket:\n\n";
+                $answer .= '📊 **Ditemukan ' . count($results) . " baris**\n\n";
+
+                $preferredOrder = [
+                    'id', 'site_id', 'status_site', 'status_ticket',
+                    'suspect_problem', 'site_class', 'saverity',
+                    'nop', 'cluster_to', 'time_down', 'tim_fop',
+                    'remark', 'ticket_swfm', 'created_at', 'updated_at',
+                ];
+
+                $maxShow = min(10, count($results));
+                for ($i = 0; $i < $maxShow; $i++) {
+                    $row = (array) $results[$i];
+                    $answer .= '🎫 **Tiket ' . ($i + 1) . ":**\n";
+
+                    foreach ($preferredOrder as $k) {
+                        if (array_key_exists($k, $row)) {
+                            $label = $this->getColumnLabel($k);
+                            $answer .= "• $label: " . ($row[$k] ?? 'N/A') . "\n";
+                            unset($row[$k]);
+                        }
+                    }
+
+                    foreach ($row as $key => $value) {
+                        $label = $this->getColumnLabel($key);
+                        $answer .= "• $label: " . ($value ?? 'N/A') . "\n";
+                    }
+
+                    $answer .= "\n";
+                }
+
+                if (count($results) > $maxShow) {
+                    $answer .= '... dan ' . (count($results) - $maxShow) . " baris lainnya.\n";
+                }
+            }
+
+            // Simpan hasil eksekusi di log tabel
+            $review->update([
+                'status'          => 'executed',
+                'reviewer_id'     => $user?->id,
+                'reviewed_at'     => now(),
+                'execution_result'=> json_encode($results),
+            ]);
+
+            return response()->json([
+                'answer'     => $answer,
+                'sql'        => $sqlQuery,
+                'review_id'  => $review->id,
+                'risk_level' => $review->risk_level,
             ]);
         } catch (\Exception $e) {
             Log::error('Database Query Error: ' . $e->getMessage() . ' | Failed Query: ' . $sqlQuery);
+
+            $review->update([
+                'status'       => 'executed',
+                'reviewer_id'  => $user?->id,
+                'reviewed_at'  => now(),
+                'error_message'=> $e->getMessage(),
+            ]);
+
             return response()->json([
                 'answer' => 'Maaf, terjadi kesalahan saat mengambil data dari database. Query yang dihasilkan mungkin tidak valid.',
-                'sql' => $sqlQuery,
-            ]);
+                'sql'    => $sqlQuery,
+            ], 500);
         }
     }
 
     private function getColumnLabel($columnName)
     {
         $labels = [
-            'id' => 'ID',
-            'site_id' => 'Site ID',
-            'site_class' => 'Kelas Site',
-            'saverity' => 'Tingkat Keparahan',
-            'suspect_problem' => 'Kategori Masalah',
-            'time_down' => 'Waktu Down',
-            'status_site' => 'Status Site',
-            'status_ticket' => 'Status Ticket',
-            'tim_fop' => 'Tim FOP',
-            'remark' => 'Catatan',
-            'ticket_swfm' => 'Tiket SWFM',
-            'nop' => 'NOP',
-            'cluster_to' => 'Cluster',
-            'nossa' => 'Nossa',
-            'created_at' => 'Dibuat Pada',
-            'updated_at' => 'Diupdate Pada',
+            'id'             => 'ID',
+            'site_id'        => 'Site ID',
+            'site_class'     => 'Kelas Site',
+            'saverity'       => 'Tingkat Keparahan',
+            'suspect_problem'=> 'Kategori Masalah',
+            'time_down'      => 'Waktu Down',
+            'status_site'    => 'Status Site',
+            'status_ticket'  => 'Status Ticket',
+            'tim_fop'        => 'Tim FOP',
+            'remark'         => 'Catatan',
+            'ticket_swfm'    => 'Tiket SWFM',
+            'nop'            => 'NOP',
+            'cluster_to'     => 'Cluster',
+            'nossa'          => 'Nossa',
+            'created_at'     => 'Dibuat Pada',
+            'updated_at'     => 'Diupdate Pada',
         ];
 
         return $labels[$columnName] ?? ucfirst(str_replace('_', ' ', $columnName));

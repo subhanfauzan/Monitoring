@@ -46,7 +46,6 @@
                 <h3 class="text-sm font-semibold text-gray-700">SQL</h3>
                 <pre id="sqlBox" class="mt-2 p-3 rounded bg-gray-100 text-sm text-gray-800 whitespace-pre-wrap hidden">(kosong)</pre>
             </div>
-
         </div>
 
         <div class="bg-gray-50 rounded-lg p-4" hidden>
@@ -59,8 +58,70 @@
         </div>
     </div>
 
+    <!-- ========================================================= -->
+    <!-- 🟦 MODAL HUMAN OVERSIGHT -->
+    <!-- ========================================================= -->
+    <div id="sqlModal"
+         class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-white w-full max-w-xl rounded-2xl shadow-xl p-5 space-y-4">
+
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-bold text-gray-800">Review Query</h2>
+                <button id="modalClose" class="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+            </div>
+
+            <div>
+                <p class="text-xs text-gray-500 mb-1">Pertanyaan:</p>
+                <p id="modalQuestion" class="text-sm text-gray-800"></p>
+            </div>
+
+            <div class="flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                    <span class="text-gray-500">Risk level:</span>
+                    <span id="modalRiskBadge"
+                          class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-200 text-gray-700">
+                        -
+                    </span>
+                </div>
+                <p class="text-gray-500">
+                    Query tidak dijalankan sebelum Anda klik <span class="font-semibold">Jalankan</span>.
+                </p>
+            </div>
+
+            <div>
+                <p class="text-xs text-gray-500 mb-1">Preview SQL:</p>
+                <pre id="modalSql"
+                     class="mt-1 p-3 rounded bg-gray-100 text-xs text-gray-800 whitespace-pre-wrap max-h-64 overflow-y-auto"></pre>
+            </div>
+
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-900">
+                <p class="font-semibold mb-1">Checklist:</p>
+                <ul class="list-disc list-inside space-y-1">
+                    <li>Hanya SELECT dari <code>daftar_tiket</code>.</li>
+                    <li>WHERE sesuai kebutuhan.</li>
+                    <li>Ada LIMIT (default 50).</li>
+                </ul>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <button id="modalCancel"
+                        class="px-3 py-1.5 text-xs rounded-lg border border-gray-300 hover:bg-gray-100">
+                    Batal
+                </button>
+                <button id="modalExecute"
+                        class="px-4 py-1.5 text-xs rounded-lg font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60">
+                    Jalankan Query Ini
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 🟦 JAVASCRIPT -->
+    <!-- ========================================================= -->
     <script>
         const $ = (q) => document.querySelector(q);
+
         const providerEl = $('#provider');
         const questionEl = $('#question');
         const sendBtn = $('#sendBtn');
@@ -71,18 +132,79 @@
         const toggleDebugBtn = $('#toggleDebug');
         const sqlBox = $('#sqlBox');
 
-        // URL aman dari route() (hindari typo path)
+        /* === HUMAN OVERSIGHT ELEMENTS === */
+        const sqlModal       = $('#sqlModal');
+        const modalQuestion  = $('#modalQuestion');
+        const modalSql       = $('#modalSql');
+        const modalRiskBadge = $('#modalRiskBadge');
+        const modalClose     = $('#modalClose');
+        const modalCancel    = $('#modalCancel');
+        const modalExecute   = $('#modalExecute');
+        let currentReviewId  = null;
+
+        /* === ROUTES === */
         const URLS = {
             chat: @json(route('chat.ask')),
             gemini: @json(route('gemini.ask')),
+            executeBase: @json(url('/chat/execute')),
         };
 
-        providerEl.addEventListener('change', () => {
-            $('#modelHint').textContent =
-                providerEl.value === 'gemini' ?
-                'model: gemini-1.5-flash/pro' :
-                'model: gpt-4o';
-        });
+        function openModal() {
+            sqlModal.classList.remove('hidden');
+            sqlModal.classList.add('flex');
+        }
+
+        function closeModal() {
+            sqlModal.classList.add('hidden');
+            sqlModal.classList.remove('flex');
+            currentReviewId = null;
+        }
+
+        modalClose.addEventListener('click', closeModal);
+        modalCancel.addEventListener('click', closeModal);
+
+        function setRiskBadge(level) {
+            modalRiskBadge.textContent = level;
+
+            modalRiskBadge.className =
+                "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium";
+
+            if (level === 'low') {
+                modalRiskBadge.classList.add('bg-green-100', 'text-green-700');
+            } else if (level === 'medium') {
+                modalRiskBadge.classList.add('bg-yellow-100', 'text-yellow-700');
+            } else if (level === 'high') {
+                modalRiskBadge.classList.add('bg-red-100', 'text-red-700');
+            } else {
+                modalRiskBadge.classList.add('bg-gray-200', 'text-gray-700');
+            }
+        }
+
+        const csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+        async function postJSON(url, payload) {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrf,
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify(payload),
+            });
+
+            const raw = await resp.text();
+            let data;
+            try {
+                data = JSON.parse(raw);
+            } catch {
+                data = { raw };
+            }
+
+            return { ok: resp.ok, status: resp.status, data };
+        }
 
         toggleDebugBtn.addEventListener('click', () => {
             debugBox.classList.toggle('hidden');
@@ -97,38 +219,9 @@
             sqlBox.classList.add('hidden');
         });
 
-        const csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-
-        async function postJSON(url, payload) {
-            const resp = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrf,
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-                credentials: 'same-origin', // kirim cookie sesi utk verifikasi CSRF
-                body: JSON.stringify(payload),
-            });
-
-            const raw = await resp.text();
-            let data;
-            try {
-                data = JSON.parse(raw);
-            } catch {
-                data = {
-                    raw
-                };
-            }
-
-            return {
-                ok: resp.ok,
-                status: resp.status,
-                data
-            };
-        }
-
+        /* ===================================================== */
+        /* 🟧 STEP 1: Generate SQL → tampilkan modal review       */
+        /* ===================================================== */
         sendBtn.addEventListener('click', async () => {
             const question = questionEl.value.trim();
             if (!question) return alert('Pertanyaan tidak boleh kosong');
@@ -138,64 +231,79 @@
 
             sendBtn.disabled = true;
             sendBtn.textContent = 'Memproses...';
-            lastProviderEl.textContent = provider.toUpperCase();
             answerEl.textContent = '…';
+            lastProviderEl.textContent = provider.toUpperCase();
 
             try {
-                const {
-                    ok,
-                    status,
-                    data
-                } = await postJSON(url, {
-                    question
-                });
+                const { ok, status, data } = await postJSON(url, { question });
+
                 if (!ok) {
-                    const msg = data?.message || data?.error || data?.raw || 'Terjadi kesalahan';
-                    answerEl.textContent = `Error ${status}: ${msg}`;
-                    // Tampilkan SQL jika server masih mengirimkannya bersama error
-                    const sqlText = data?.sql ?? data?.query ?? null;
-                    if (sqlText) {
-                        sqlBox.textContent = sqlText;
-                        sqlBox.classList.remove('hidden');
-                    } else {
-                        sqlBox.textContent = '(tidak ada SQL)';
-                        sqlBox.classList.remove('hidden');
-                    }
-                } else {
-                    answerEl.textContent = data?.answer ?? '(tidak ada jawaban)';
-                    // coba beberapa properti umum untuk SQL: sql / query / sql_query
-                    const sqlText = data?.sql ?? data?.query ?? data?.sql_query ?? null;
-                    if (sqlText) {
-                        sqlBox.textContent = sqlText;
-                        sqlBox.classList.remove('hidden');
-                    } else {
-                        // jika Anda ingin menyembunyikan saat tidak ada SQL, uncomment baris berikut:
-                        // sqlBox.classList.add('hidden');
-                        // pilihan: tampilkan pesan jelas bahwa tidak ada SQL
-                        sqlBox.textContent = '(tidak ada SQL)';
-                        sqlBox.classList.remove('hidden');
-                    }
+                    answerEl.textContent = data?.message || "Terjadi error";
+                    return;
                 }
-                debugBox.textContent = JSON.stringify({
-                    status,
-                    data
-                }, null, 2);
-            } catch (e) {
-                answerEl.textContent = 'Error: ' + e.message;
-                debugBox.textContent = String(e);
-                sqlBox.textContent = '(tidak ada SQL karena error)';
-                sqlBox.classList.remove('hidden');
+
+                // Jika AI menolak pertanyaan (bukan data monitoring)
+                if (data.answer && !data.sql_preview) {
+                    answerEl.textContent = data.answer;
+                    sqlBox.classList.remove('hidden');
+                    sqlBox.textContent = data.sql || '(tidak ada SQL)';
+                    return;
+                }
+
+                // === HUMAN OVERSIGHT MODE ===
+                currentReviewId = data.review_id;
+                modalQuestion.textContent = question;
+                modalSql.textContent = data.sql_preview;
+                setRiskBadge(data.risk_level);
+
+                openModal();
+
+            } catch (err) {
+                answerEl.textContent = "Error: " + err.message;
             } finally {
                 sendBtn.disabled = false;
                 sendBtn.textContent = 'Kirim';
             }
         });
 
-        // Ctrl+Enter kirim
+        /* ===================================================== */
+        /* 🟩 STEP 2: Eksekusi query setelah user menekan OK     */
+        /* ===================================================== */
+        modalExecute.addEventListener('click', async () => {
+            if (!currentReviewId) return;
+
+            modalExecute.disabled = true;
+            modalExecute.textContent = "Menjalankan...";
+
+            try {
+                const url = `${URLS.executeBase}/${currentReviewId}`;
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrf,
+                        'Accept': 'application/json'
+                    },
+                });
+
+                const data = await res.json();
+
+                answerEl.textContent = data.answer || "(tidak ada jawaban)";
+                sqlBox.classList.remove('hidden');
+                sqlBox.textContent = data.sql || "(kosong)";
+
+                closeModal();
+            } catch (e) {
+                answerEl.textContent = "Terjadi error: " + e.message;
+            } finally {
+                modalExecute.disabled = false;
+                modalExecute.textContent = "Jalankan Query Ini";
+            }
+        });
+
         questionEl.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key === 'Enter') sendBtn.click();
         });
     </script>
-</body>
 
+</body>
 </html>
