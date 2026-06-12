@@ -59,52 +59,73 @@ class TiketController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'site_id' => 'required',
-            'time_down' => 'required',
-            'status_ticket' => 'nullable|in:Open,Close',
+            'site_id_select' => 'required|array',
+            'site_id_select.*' => 'required',
+            'time_down' => 'required|array',
+            'time_down.*' => 'required',
+            'status_ticket' => 'nullable|array',
+            'status_ticket.*' => 'nullable|in:Open,Close',
         ]);
 
-        // Parse datetime dengan format yang benar: Y-m-d\TH:i
-        try {
-            $timeDown = Carbon::createFromFormat('Y-m-d\TH:i', $request->input('time_down'))->format('Y-m-d H:i:s');
-        } catch (\Exception $e) {
-            // Fallback jika parsing gagal
-            $timeDown = Carbon::now()->format('Y-m-d H:i:s');
-            toastr('Format tanggal tidak valid, menggunakan waktu sekarang!', 'warning');
+        $successCount = 0;
+        $failCount = 0;
+
+        foreach ($request->site_id_select as $index => $siteIdSelect) {
+            if (!$siteIdSelect) {
+                continue;
+            }
+
+            $site = Dapot::where('site_id', $siteIdSelect)->first();
+
+            if (!$site) {
+                toastr("Site $siteIdSelect tidak ditemukan!", 'error');
+                $failCount++;
+                continue;
+            }
+
+            // Parse datetime dengan format yang benar: Y-m-d\TH:i
+            $timeDownRaw = $request->input("time_down.$index");
+            try {
+                $timeDown = Carbon::createFromFormat('Y-m-d\TH:i', $timeDownRaw)->format('Y-m-d H:i:s');
+            } catch (\Exception $e) {
+                // Fallback jika parsing gagal
+                $timeDown = Carbon::now()->format('Y-m-d H:i:s');
+                toastr('Format tanggal tidak valid, menggunakan waktu sekarang!', 'warning');
+            }
+
+            $create = Tiket::create([
+                'site_id' => $site->site_id . '_' . $site->site_name,
+                'site_class' => $site->site_class,
+                'saverity' => $request->input("saverity.$index", 'Low'),
+                'nop' => $site->nop,
+                'cluster_to' => $site->cluster_to,
+                'suspect_problem' => 'Power',
+                'status_site' => $request->input("status_site.$index", 'Down'),
+                'time_down' => $timeDown,
+                'waktu_saat_ini' => Carbon::now()->format('Y-m-d H:i:s'),
+                'tim_fop' => $request->input("tim_fop.$index"),
+                'ticket_swfm' => '',
+                'nossa' => '',
+                'remark' => $request->input("remark.$index"),
+                // 'status_ticket' => $request->input("status_ticket.$index", 'Open'),
+            ]);
+
+            if ($create) {
+                $successCount++;
+            } else {
+                $failCount++;
+            }
         }
 
-        // Get site data
-        $site = Dapot::where('site_id', $request->site_id_select)->first();
-
-        if (!$site) {
-            toastr('Site tidak ditemukan!', 'error');
-            return redirect()->back();
+        if ($successCount > 0) {
+            toastr("$successCount Data Berhasil Ditambahkan!", 'success');
         }
 
-        $create = Tiket::create([
-            'site_id' => $site->site_id . '_' . $site->site_name,
-            'site_class' => $site->site_class,
-            'saverity' => $request->saverity,
-            'nop' => $site->nop,
-            'cluster_to' => $site->cluster_to,
-            'suspect_problem' => 'Power',
-            'status_site' => $request->status_site ?: 'Down',
-            'time_down' => $timeDown,
-            'waktu_saat_ini' => Carbon::now()->format('Y-m-d H:i:s'),
-            'tim_fop' => $request->tim_fop,
-            'ticket_swfm' => '',
-            'nossa' => '',
-            'remark' => $request->remark,
-            // 'status_ticket' => $request->input('status_ticket', 'Open'),
-        ]);
-
-        if ($create) {
-            toastr('Data Berhasil Ditambahkan!', 'success');
-            return redirect()->route('tiket.index');
-        } else {
-            toastr('Gagal menambahkan data!', 'error');
-            return redirect()->back();
+        if ($failCount > 0) {
+            toastr("$failCount Data Gagal Ditambahkan!", 'error');
         }
+
+        return redirect()->route('tiket.index');
     }
 
     public function toggleLock(Request $request, $id)
