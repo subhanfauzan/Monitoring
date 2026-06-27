@@ -1,0 +1,1 @@
+<?php require 'vendor/autoload.php'; \ = require_once 'bootstrap/app.php'; \ = \->make(Illuminate\Contracts\Console\Kernel::class); \->bootstrap(); \ = DB::table('daftar_tiket')->where('nop', 'NOP SURABAYA')->whereNotNull('time_down')->count(); echo \; 

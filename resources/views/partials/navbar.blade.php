@@ -16,85 +16,11 @@
             <span class="d-block small text-muted">Let’s take a detailed look at Incident today</span> <!-- Teks di bawah nama -->
         </div>
         <ul class="navbar-nav flex-row align-items-center ms-auto">
-            <!-- User -->
-            <li class="nav-item navbar-dropdown dropdown-user dropdown me-5">
-
-                <div class="d-flex align-items-center">
-                    <!-- Avatar -->
-                    <div class="text-end">
-                        <span class="d-block fw-bold">{{ Auth::user()->name }}</span> <!-- Nama di atas -->
-                        <span class="d-block small text-muted">Staff OMC</span> <!-- Teks di bawah nama -->
-                    </div>
-                    <div class="avatar avatar-online avatar-xl ms-2">
-                        <img src="{{ asset('') }}template/assets/img/avatars/1.png" alt class="rounded-circle" />
-                    </div>
-
-                    <!-- Teks Nama dan Deskripsi (dipindah ke sebelah kiri) -->
-                </div>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li>
-                        <a class="dropdown-item mt-0" href="pages-account-settings-account.html">
-                            <div class="d-flex align-items-center">
-                                <div class="flex-shrink-0 me-2">
-                                    <div class="avatar avatar-online">
-                                        <img src="{{ asset('') }}template/assets/img/avatars/1.png" alt
-                                            class="rounded-circle" />
-                                    </div>
-                                </div>
-                                <div class="flex-grow-1">
-                                    <h6 class="mb-0">{{ Auth::user()->name }}</h6>
-                                    <small class="text-muted">Admin</small>
-                                </div>
-                            </div>
-                        </a>
-                    </li>
-                    <li>
-                        <div class="dropdown-divider my-1 mx-n2"></div>
-                    </li>
-                    <li>
-                        <a class="dropdown-item" href="pages-profile-user.html">
-                            <i class="ti ti-user me-3 ti-md"></i><span class="align-middle">My Profile</span>
-                        </a>
-                    </li>
-                    <li>
-                        <a class="dropdown-item" href="pages-account-settings-account.html">
-                            <i class="ti ti-settings me-3 ti-md"></i><span class="align-middle">Settings</span>
-                        </a>
-                    </li>
-                    <li>
-                        <a class="dropdown-item" href="pages-account-settings-billing.html">
-                            <span class="d-flex align-items-center align-middle">
-                                <i class="flex-shrink-0 ti ti-file-dollar me-3 ti-md"></i><span
-                                    class="flex-grow-1 align-middle">Billing</span>
-                                <span
-                                    class="flex-shrink-0 badge bg-danger d-flex align-items-center justify-content-center">4</span>
-                            </span>
-                        </a>
-                    </li>
-                    <li>
-                        <div class="dropdown-divider my-1 mx-n2"></div>
-                    </li>
-                    <li>
-                        <a class="dropdown-item" href="pages-pricing.html">
-                            <i class="ti ti-currency-dollar me-3 ti-md"></i><span class="align-middle">Pricing</span>
-                        </a>
-                    </li>
-                    <li>
-                        <a class="dropdown-item" href="pages-faq.html">
-                            <i class="ti ti-question-mark me-3 ti-md"></i><span class="align-middle">FAQ</span>
-                        </a>
-                    </li>
-                    <form action="{{ route('logout') }}" method="POST">
-                        @csrf
-                        <button type="submit" class="btn btn-sm btn-danger d-flex container-fluid">
-                            <small class="align-middle">Logout</small>
-                            <i class="ti ti-logout ms-2 ti-14px"></i>
-                        </button>
-                    </form>
-
-                </ul>
+            <!-- Logo Telkom & Telkomsel -->
+            <li class="nav-item me-3 d-flex align-items-center gap-2 gap-md-4">
+                <img src="{{ asset('images/telkom.jpg') }}" alt="Telkom Infra" class="img-fluid" style="max-height: 80px; height: auto; object-fit: contain;">
+                <img src="{{ asset('images/telkomsel.png') }}" alt="Telkomsel" class="img-fluid pl-3" style="max-height: 80px; height: auto; object-fit: contain;">
             </li>
-            <!--/ User -->
         </ul>
     </div>
 

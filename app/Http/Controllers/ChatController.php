@@ -70,6 +70,7 @@ class ChatController extends Controller
         $question = $request->input('question');
 
         $client = new Client(); // dipakai untuk dua panggilan OpenAI
+        $totalUsage = ['prompt_tokens' => 0, 'completion_tokens' => 0, 'total_tokens' => 0];
 
         // === VALIDASI INTENT (YA/TIDAK) ===
         $validationSystem = <<<SYS
@@ -116,9 +117,16 @@ class ChatController extends Controller
             $validationData = json_decode($validationResponse->getBody()->getContents(), true);
             $isDataRelated = strtoupper(trim($validationData['choices'][0]['message']['content'] ?? 'TIDAK'));
 
+            if (isset($validationData['usage'])) {
+                $totalUsage['prompt_tokens'] += $validationData['usage']['prompt_tokens'] ?? 0;
+                $totalUsage['completion_tokens'] += $validationData['usage']['completion_tokens'] ?? 0;
+                $totalUsage['total_tokens'] += $validationData['usage']['total_tokens'] ?? 0;
+            }
+
             if ($isDataRelated !== 'YA') {
                 return response()->json([
                     'answer' => "Maaf, saya adalah asisten khusus untuk monitoring jaringan dan data tiket. Saya hanya bisa membantu Anda dengan pertanyaan seputar:\n\n• Status site (down/up)\n• Masalah jaringan (power, telkom, dll)\n• Data lokasi dan NOP\n• Statistik tiket\n• Informasi tim FOP\n\nSilakan tanyakan sesuatu tentang data monitoring jaringan Anda.",
+                    'usage'  => $totalUsage,
                 ]);
             }
         } catch (\Exception $e) {
@@ -189,6 +197,12 @@ class ChatController extends Controller
             $data = json_decode($response->getBody()->getContents(), true);
             $raw = trim($data['choices'][0]['message']['content'] ?? '');
 
+            if (isset($data['usage'])) {
+                $totalUsage['prompt_tokens'] += $data['usage']['prompt_tokens'] ?? 0;
+                $totalUsage['completion_tokens'] += $data['usage']['completion_tokens'] ?? 0;
+                $totalUsage['total_tokens'] += $data['usage']['total_tokens'] ?? 0;
+            }
+
             // Parse JSON {"sql":"..."}
             $decoded = json_decode($raw, true);
             if (json_last_error() === JSON_ERROR_NONE && isset($decoded['sql'])) {
@@ -203,6 +217,7 @@ class ChatController extends Controller
             Log::error('OpenAI API Error: ' . $e->getMessage());
             return response()->json([
                 'answer' => 'Maaf, terjadi kesalahan saat berkomunikasi dengan AI. Silakan coba lagi.',
+                'usage'  => $totalUsage,
             ]);
         }
 
@@ -210,6 +225,7 @@ class ChatController extends Controller
         if (empty($sqlQuery) || strlen($sqlQuery) < 15 || strtoupper(trim($sqlQuery)) === 'INVALID') {
             return response()->json([
                 'answer' => "Maaf, saya tidak dapat memproses pertanyaan tersebut sebagai query data tiket. Silakan tanyakan hal-hal seperti:\n\n• \"tampilkan site down hari ini\"\n• \"masalah power bulan ini\"\n• \"berapa total tiket minggu ini\"\n• \"site di NOP Surabaya yang bermasalah\"",
+                'usage'  => $totalUsage,
             ]);
         }
 
@@ -224,6 +240,7 @@ class ChatController extends Controller
 
             return response()->json([
                 'answer' => 'Maaf, hanya query SELECT ke tabel daftar_tiket yang diizinkan.',
+                'usage'  => $totalUsage,
             ]);
         }
 
@@ -232,7 +249,7 @@ class ChatController extends Controller
             $sqlQuery .= ' LIMIT 50';
         }
 
-        // === HUMAN OVERSIGHT: simpan ke tabel review (BELUM dieksekusi) ===
+        // === SIMPAN KE TABEL REVIEW DAN LANGSUNG EKSEKUSI ===
         $riskLevel = $this->assessRisk($sqlQuery);
         $user = Auth::user();
 
@@ -242,20 +259,101 @@ class ChatController extends Controller
             'user_question' => $question,
             'generated_sql' => $sqlQuery,
             'risk_level'    => $riskLevel,
-            'status'        => 'ready', // bisa ubah ke 'pending' kalau mau ada approve admin dulu
+            'status'        => 'executed', 
             'meta'          => [
                 'source' => 'chatbot_monitoring',
             ],
         ]);
 
-        // Respon ke frontend: user / admin lihat dulu SQL-nya, baru panggil /execute
-        return response()->json([
-            'mode'        => 'preview',
-            'message'     => 'Query berhasil dibuat, silakan review sebelum dijalankan.',
-            'sql_preview' => $sqlQuery,
-            'risk_level'  => $riskLevel,
-            'review_id'   => $review->id,
-        ]);
+        try {
+            Log::info('Executing SQL directly (GPT): ' . $sqlQuery);
+
+            $results = DB::select($sqlQuery);
+            
+            $review->update([
+                'reviewer_id'     => $user?->id,
+                'reviewed_at'     => now(),
+                'execution_result'=> json_encode($results),
+            ]);
+
+            if (empty($results)) {
+                $answer = 'Saya sudah mencari di database, namun tidak ada data yang cocok dengan kriteria yang Anda berikan. Coba gunakan kata kunci yang berbeda.';
+            } else {
+                // Handle single aggregate result like COUNT(*)
+                $first = (array)$results[0];
+                if (array_key_exists('total', $first) && count($results) === 1 && count($first) === 1) {
+                    return response()->json([
+                        'answer' => (string)$first['total'],
+                        'sql'    => $sqlQuery,
+                        'usage'  => $totalUsage,
+                    ]);
+                }
+
+                $answer = "Berikut adalah hasil pencarian data tiket:\n\n";
+
+                $preferredOrder = [
+                    'site_id', 'status_site', 'status_ticket',
+                    'suspect_problem', 'site_class', 'saverity',
+                    'nop', 'cluster_to', 'time_down', 'tim_fop',
+                    'remark', 'ticket_swfm', 'nossa'
+                ];
+
+                $maxShow = min(10, count($results));
+                for ($i = 0; $i < $maxShow; $i++) {
+                    $row = (array) $results[$i];
+
+                    foreach ($preferredOrder as $k) {
+                        if (array_key_exists($k, $row)) {
+                            $label = $this->getColumnLabel($k);
+                            $val = $row[$k] ?? '';
+                            
+                            if ($k === 'time_down' && is_numeric($val)) {
+                                $unixTime = ($val - 25569) * 86400;
+                                $val = gmdate("Y-m-d H:i:s", (int)$unixTime);
+                            }
+                            
+                            if ($k === 'site_id') {
+                                $answer .= " Site ID: " . $val . "\n";
+                            } else {
+                                $answer .= "• $label: " . $val . "\n";
+                            }
+                            unset($row[$k]);
+                        }
+                    }
+
+                    unset($row['id'], $row['created_at'], $row['updated_at']);
+
+                    foreach ($row as $key => $value) {
+                        $label = $this->getColumnLabel($key);
+                        $answer .= "• $label: " . ($value ?? '') . "\n";
+                    }
+
+                    $answer .= "\n";
+                }
+
+                if (count($results) > $maxShow) {
+                    $answer .= '... dan ' . (count($results) - $maxShow) . " baris lainnya.\n";
+                }
+            }
+
+            return response()->json([
+                'answer' => $answer,
+                'sql'    => $sqlQuery,
+                'usage'  => $totalUsage,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Database Query Error: ' . $e->getMessage() . ' | Failed Query: ' . $sqlQuery);
+            
+            $review->update([
+                'error_message'=> $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'answer' => 'Maaf, terjadi kesalahan saat mengambil data dari database. Query yang dihasilkan mungkin tidak valid.',
+                'sql'    => $sqlQuery,
+                'usage'  => $totalUsage,
+            ], 500);
+        }
     }
 
     /**
@@ -318,31 +416,42 @@ class ChatController extends Controller
                 $answer = 'Saya sudah mencari di database, namun tidak ada data yang cocok dengan kriteria yang Anda berikan. Coba gunakan kata kunci yang berbeda.';
             } else {
                 $answer = "Berikut adalah hasil pencarian data tiket:\n\n";
-                $answer .= '📊 **Ditemukan ' . count($results) . " baris**\n\n";
 
                 $preferredOrder = [
-                    'id', 'site_id', 'status_site', 'status_ticket',
+                    'site_id', 'status_site', 'status_ticket',
                     'suspect_problem', 'site_class', 'saverity',
                     'nop', 'cluster_to', 'time_down', 'tim_fop',
-                    'remark', 'ticket_swfm', 'created_at', 'updated_at',
+                    'remark', 'ticket_swfm', 'nossa'
                 ];
 
                 $maxShow = min(10, count($results));
                 for ($i = 0; $i < $maxShow; $i++) {
                     $row = (array) $results[$i];
-                    $answer .= '🎫 **Tiket ' . ($i + 1) . ":**\n";
 
                     foreach ($preferredOrder as $k) {
                         if (array_key_exists($k, $row)) {
                             $label = $this->getColumnLabel($k);
-                            $answer .= "• $label: " . ($row[$k] ?? 'N/A') . "\n";
+                            $val = $row[$k] ?? '';
+                            
+                            if ($k === 'time_down' && is_numeric($val)) {
+                                $unixTime = ($val - 25569) * 86400;
+                                $val = gmdate("Y-m-d H:i:s", (int)$unixTime);
+                            }
+                            
+                            if ($k === 'site_id') {
+                                $answer .= " Site ID: " . $val . "\n";
+                            } else {
+                                $answer .= "• $label: " . $val . "\n";
+                            }
                             unset($row[$k]);
                         }
                     }
 
+                    unset($row['id'], $row['created_at'], $row['updated_at']);
+
                     foreach ($row as $key => $value) {
                         $label = $this->getColumnLabel($key);
-                        $answer .= "• $label: " . ($value ?? 'N/A') . "\n";
+                        $answer .= "• $label: " . ($value ?? '') . "\n";
                     }
 
                     $answer .= "\n";

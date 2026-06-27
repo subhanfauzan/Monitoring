@@ -25,7 +25,7 @@ class ImportTiket implements ToModel
             return null;
         }
 
-        $statusSite = $row[16] !== 'ESCALATED TO INSERA' ? 'Power' : 'ESCALATED TO INSERA';
+        $statusSite = $row[16] !== 'ESCALATED TO INSERA' ? 'Power' : 'Transmisi';
         $remark = $row[16] === 'ESCALATED TO INSERA' ? $row[42] : '';
 
         return new Tiket([

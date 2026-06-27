@@ -124,20 +124,29 @@ SYS;
             // Daftar baris + dataset
             $preferredOrder = $this->preferredOrder();
             $out  = "Berikut adalah hasil pencarian data tiket:\n\n";
-            $out .= 'Ditemukan ' . count($results) . " baris\n\n";
 
             $maxShow = min(10, count($results));
             for ($i = 0; $i < $maxShow; $i++) {
                 $row = (array)$results[$i];
-                $out .= 'Tiket ' . ($i + 1) . ":\n";
                 foreach ($preferredOrder as $k) {
                     if (array_key_exists($k, $row)) {
-                        $out .= '• ' . $this->label($k) . ': ' . ($row[$k] ?? 'N/A') . "\n";
+                        $label = $this->label($k);
+                        $val = $row[$k] ?? '';
+                        if ($k === 'time_down' && is_numeric($val)) {
+                            $unixTime = ($val - 25569) * 86400;
+                            $val = gmdate("Y-m-d H:i:s", (int)$unixTime);
+                        }
+                        if ($k === 'site_id') {
+                            $out .= " Site ID: " . $val . "\n";
+                        } else {
+                            $out .= '• ' . $label . ': ' . $val . "\n";
+                        }
                         unset($row[$k]);
                     }
                 }
+                unset($row['id'], $row['created_at'], $row['updated_at']);
                 foreach ($row as $k => $v) {
-                    $out .= '• ' . $this->label($k) . ': ' . ($v ?? 'N/A') . "\n";
+                    $out .= '• ' . $this->label($k) . ': ' . ($v ?? '') . "\n";
                 }
                 $out .= "\n";
             }
@@ -193,9 +202,9 @@ SYS;
     private function preferredOrder(): array
     {
         return [
-            'id','site_id','status_site','status_ticket','suspect_problem','site_class',
+            'site_id','status_site','status_ticket','suspect_problem','site_class',
             'saverity','nop','cluster_to','time_down','tim_fop','remark','ticket_swfm',
-            'created_at','updated_at'
+            'nossa'
         ];
     }
 

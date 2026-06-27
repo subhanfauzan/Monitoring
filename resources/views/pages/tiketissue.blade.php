@@ -1,19 +1,118 @@
 @extends('layouts.layout')
 
 @section('content')
+    <style>
+        body.screenshot-mode .action-buttons-container {
+            display: none !important;
+        }
+        body.screenshot-mode footer {
+            display: none !important;
+        }
+
+        /* ========== Dashboard Custom Styles for Charts ========== */
+        .chart-card {
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.05);
+            background: #fff;
+        }
+        .chart-card .card-header-custom {
+            padding: 1rem 1.25rem 0.5rem;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .chart-card .card-title-custom {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        .chart-card .card-subtitle-custom {
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+
+        /* ---- Custom Legend Pills ---- */
+        .sev-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.55rem 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .sev-row:last-child { border-bottom: none; }
+        .sev-dot {
+            width: 9px; height: 9px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            margin-right: 0.6rem;
+        }
+        .sev-label { font-size: 0.82rem; font-weight: 600; color: #475569; }
+        .sev-count { font-size: 0.9rem; font-weight: 700; color: #1e293b; }
+        .sev-bar-wrap {
+            flex: 1;
+            margin: 0 0.75rem;
+            background: #e2e8f0;
+            border-radius: 100px;
+            height: 5px;
+            overflow: hidden;
+        }
+        .sev-bar { height: 100%; border-radius: 100px; transition: width 0.8s ease; }
+    </style>
     <div class="flex-grow-1 container-p-y container-xxxl px-3 ">
         <div class="row g-6">
             <div class="container mt-10">
                 <div class="card" style="overflow-x: scroll;">
                     <div class="card-header">
-                        <div class="col-6">
+                        <div class="col-12 mb-4">
                             <button type="button" data-bs-toggle="modal" class="btn btn-secondary waves-effect waves-light"
                                 data-bs-target="#basicModal">Tambah Data</button>
                             <button type="button" data-bs-toggle="modal" class="btn btn-secondary waves-effect waves-light"
-                                data-bs-target="#exportmodal">Export</button>
+                                data-bs-target="#exportmodal">Export / Import</button>
                             <button type="button" class="btn btn-secondary waves-effect waves-light"
                                 data-nama="{{ $nop->nama_nop }}" onclick="confirmDeleteNop(this)">Hapus Data
                                 {{ $nop->nama_nop }}</button>
+                        </div>
+                        
+                        {{-- Chart Section (di bawah tombol) --}}
+                        <div class="row w-100 m-0 mt-4">
+                            <div class="col-12 col-lg-8 mb-4">
+                                <div class="chart-card h-100">
+                                    <div class="card-header-custom">
+                                        <div class="card-title-custom">Distribusi Incident per Jam</div>
+                                        <div class="card-subtitle-custom">Total incident NOP {{ $nop->nama_nop }} berdasarkan waktu</div>
+                                    </div>
+                                    <div class="card-body pt-2 d-flex flex-column">
+                                        <div style="position:relative; flex-grow: 1; min-height: 380px;">
+                                            <canvas id="tiketIssueChart"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-lg-4 mb-4">
+                                <div class="chart-card h-100">
+                                    <div class="card-header-custom">
+                                        <div class="card-title-custom">Data Incident Cluster TO</div>
+                                        <div class="card-subtitle-custom">Berdasarkan pembagian Cluster TO</div>
+                                    </div>
+                                    <div class="card-body pt-2 d-flex flex-column">
+                                        <div style="position:relative; height:220px; margin-bottom: 1rem;">
+                                            <canvas id="clusterPieChart"></canvas>
+                                        </div>
+                                        @php $grandTotalCluster = $totaltiket ?: 1; @endphp
+                                        <div style="max-height: 240px; overflow-y: auto; padding-right: 5px;">
+                                            @foreach($clusters as $idx => $clusterName)
+                                            <div class="sev-row">
+                                                <span class="sev-dot" style="background:{{ $clusterColors[$idx] ?? '#ccc' }};"></span>
+                                                <span class="sev-label" style="min-width: 60px;">{{ $clusterName }}</span>
+                                                <div class="sev-bar-wrap">
+                                                    <div class="sev-bar" style="background:{{ $clusterColors[$idx] ?? '#ccc' }};width:{{ round(($clusterTotals[$idx] ?? 0)/$grandTotalCluster*100) }}%;"></div>
+                                                </div>
+                                                <span class="sev-count">{{ $clusterTotals[$idx] ?? 0 }}</span>
+                                            </div>
+                                            @endforeach
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="card-body">
@@ -651,5 +750,96 @@
                 }
             });
         });
+
+        // ======= LINE CHART: Distribusi Tiket per Jam (Total) =======
+        (function() {
+            const ctx = document.getElementById('tiketIssueChart');
+            if(ctx) {
+                new Chart(ctx.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: {!! json_encode($hours ?? []) !!},
+                        datasets: [
+                            {
+                                label: 'Total Tiket',
+                                data: {!! json_encode($chartData ?? []) !!},
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                fill: true,
+                                tension: 0.4,
+                                borderWidth: 2,
+                                pointRadius: 4,
+                                pointHoverRadius: 6,
+                                pointBackgroundColor: '#3b82f6'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                                labels: { font: { size: 11 }, boxWidth: 12, padding: 12 }
+                            },
+                            tooltip: {
+                                backgroundColor: '#1e293b',
+                                titleFont: { size: 11 },
+                                bodyFont: { size: 11 },
+                                padding: 10,
+                                cornerRadius: 8
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: { font: { size: 10 }, stepSize: 1, precision: 0 },
+                                grid: { color: '#f1f5f9' }
+                            },
+                            x: {
+                                grid: { display: false },
+                                ticks: { font: { size: 10 } }
+                            }
+                        }
+                    }
+                });
+            }
+        })();
+
+        // ======= PIE CHART: Data Cluster TO =======
+        (function() {
+            const ctx = document.getElementById('clusterPieChart');
+            if(ctx) {
+                new Chart(ctx.getContext('2d'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: {!! json_encode($clusters ?? []) !!},
+                        datasets: [{
+                            data: {!! json_encode($clusterTotals ?? []) !!},
+                            backgroundColor: {!! json_encode($clusterColors ?? []) !!},
+                            borderWidth: 2,
+                            borderColor: '#fff',
+                            hoverOffset: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '68%',
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: '#1e293b',
+                                titleFont: { size: 11 },
+                                bodyFont: { size: 11 },
+                                padding: 10,
+                                cornerRadius: 8
+                            }
+                        }
+                    }
+                });
+            }
+        })();
     </script>
 @endpush

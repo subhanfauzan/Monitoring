@@ -160,7 +160,7 @@
     <!-- End Google Tag Manager (noscript) -->
 
     <!-- Layout wrapper -->
-    <div class="layout-wrapper layout-content-navbar" style="width: 100vw;">
+    <div class="layout-wrapper layout-content-navbar" style="width: 100%;">
       <div class="layout-container">
         <!-- Menu -->
         @include('partials.sidebar')

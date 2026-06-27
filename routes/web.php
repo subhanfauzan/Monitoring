@@ -26,12 +26,10 @@ Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
 Route::middleware('auth')->group(function () {
-    Route::get('/dashboard', function () {
-        return view('pages.dashboard');
-    })->name('utama');
     Route::controller(DashboardController::class)->group(function () {
         Route::get('/dashboard', 'index')->name('utama');
     });
+
 
     Route::get('/nop', [NopController::class, 'index'])->name('nop.index');
     Route::post('/nop/store', [NopController::class, 'store'])->name('nop.store');
@@ -48,6 +46,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/tiket', 'index')->name('tiket.index');
         Route::get('/tiket/count', 'getCount')->name('tiket.count');
         Route::post('tiket-import', 'import')->name('tiket.import');
+        Route::post('tiket-import-alarm', 'importAlarm')->name('tiket.importAlarm');
         Route::get('/export/{id}', 'export')->name('tiket.export');
         Route::post('/tiket/store', 'store')->name('tiket.store');
         Route::put('/tiket/{id}', 'update')->name('tiket.update');

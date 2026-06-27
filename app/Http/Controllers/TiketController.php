@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Imports\ImportTiket;
+use App\Imports\ImportAlarm;
 use App\Models\Dapot;
 use App\Models\Tiket;
 use Carbon\Carbon;
@@ -17,10 +18,72 @@ class TiketController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(\App\DataTables\TiketDataTable $dataTable)
     {
+        $dapots = Dapot::all();
+
+        // === Chart Data per Jam untuk JATIM (Semua Data) ===
+        $rows = \Illuminate\Support\Facades\DB::table('daftar_tiket')
+            ->select(
+                \Illuminate\Support\Facades\DB::raw("
+    CASE
+        WHEN MOD(time_down * 24, 24) >= 2  AND MOD(time_down * 24, 24) < 4  THEN '04:00'
+        WHEN MOD(time_down * 24, 24) >= 4  AND MOD(time_down * 24, 24) < 6  THEN '06:00'
+        WHEN MOD(time_down * 24, 24) >= 6  AND MOD(time_down * 24, 24) < 8  THEN '08:00'
+        WHEN MOD(time_down * 24, 24) >= 8  AND MOD(time_down * 24, 24) < 10 THEN '10:00'
+        WHEN MOD(time_down * 24, 24) >= 10 AND MOD(time_down * 24, 24) < 12 THEN '12:00'
+        WHEN MOD(time_down * 24, 24) >= 12 AND MOD(time_down * 24, 24) < 14 THEN '14:00'
+        WHEN MOD(time_down * 24, 24) >= 14 AND MOD(time_down * 24, 24) < 16 THEN '16:00'
+        WHEN MOD(time_down * 24, 24) >= 16 AND MOD(time_down * 24, 24) < 18 THEN '18:00'
+        WHEN MOD(time_down * 24, 24) >= 18 AND MOD(time_down * 24, 24) < 20 THEN '20:00'
+        WHEN MOD(time_down * 24, 24) >= 20 AND MOD(time_down * 24, 24) < 22 THEN '22:00'
+        WHEN MOD(time_down * 24, 24) >= 0  AND MOD(time_down * 24, 24) < 2  THEN '02:00'
+        WHEN MOD(time_down * 24, 24) >= 22 OR  MOD(time_down * 24, 24) < 0  THEN '00:00'
+    END as hour_slot
+    "),
+                \Illuminate\Support\Facades\DB::raw('COUNT(*) as total')
+            )
+            ->whereNotNull('time_down')
+            ->groupBy(\Illuminate\Support\Facades\DB::raw('hour_slot'))
+            ->orderBy('hour_slot')
+            ->get();
+
+        $hours = ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+        $chartData = array_fill(0, count($hours), 0);
+
+        foreach ($rows as $row) {
+            $hourIndex = array_search($row->hour_slot, $hours);
+            if ($hourIndex !== false) {
+                $chartData[$hourIndex] = $row->total;
+            }
+        }
+
         $totaltiket = Tiket::count();
-        return view('pages.tiket', compact('totaltiket'));
+        
+        // === Chart Bulat (Pie) Data NOP ===
+        $nopData = \Illuminate\Support\Facades\DB::table('daftar_tiket')
+            ->select('nop', \Illuminate\Support\Facades\DB::raw('COUNT(*) as total'))
+            ->groupBy('nop')
+            ->get();
+
+        $nops = [];
+        $nopTotals = [];
+        $nopColors = [];
+        
+        $colors = [
+            '#fca5a5', '#fdba74', '#fcd34d', '#fde047', '#bef264', 
+            '#86efac', '#6ee7b7', '#5eead4', '#67e8f9', '#7dd3fc', 
+            '#93c5fd', '#a5b4fc', '#c4b5fd', '#d8b4fe', '#f0abfc', 
+            '#f9a8d4', '#fda4af'
+        ];
+
+        foreach ($nopData as $index => $row) {
+            $nops[] = $row->nop ?? 'Unknown NOP';
+            $nopTotals[] = $row->total;
+            $nopColors[] = $colors[$index % count($colors)];
+        }
+
+        return $dataTable->render('pages.tiket', compact(['dapots', 'hours', 'chartData', 'totaltiket', 'nops', 'nopTotals', 'nopColors']));
     }
 
     // In your TiketController.php
@@ -48,9 +111,14 @@ class TiketController extends Controller
         $piket1 = $request->query('piket1');
         $piket2 = $request->query('piket2');
         $time = $request->query('flatpickr-datetime');
-        $tikets = Tiket::where('nop', 'NOP ' . $id)
-            ->get()
-            ->groupBy('cluster_to');
+        
+        if ($id === 'JATIM') {
+            $tikets = Tiket::get()->groupBy('cluster_to');
+        } else {
+            $tikets = Tiket::where('nop', 'NOP ' . $id)
+                ->get()
+                ->groupBy('cluster_to');
+        }
 
         // Lakukan sesuatu, contoh:
         return view('pages.result', compact('namanop', 'jam', 'piket1', 'piket2', 'tikets', 'time'));
@@ -164,6 +232,7 @@ class TiketController extends Controller
             'status_site' => $request->status_site,
             'tim_fop' => $request->tim_fop,
             'remark' => $request->remark,
+            'suspect_problem' => $request->suspect_problem ?? $tiket->suspect_problem,
             'status_ticket' => $request->status_ticket ?? $tiket->status_ticket,
         ]);
 
@@ -382,5 +451,25 @@ class TiketController extends Controller
 
             $tiket->forceDelete();
         });
+    }
+
+    public function importAlarm(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|mimes:csv,xls,xlsx',
+        ]);
+
+        $file = $request->file('file');
+        $nama_file = rand() . $file->getClientOriginalName();
+        $file->move('storage/excel', $nama_file);
+
+        try {
+            \Maatwebsite\Excel\Facades\Excel::import(new ImportAlarm(), public_path('storage/excel/' . $nama_file));
+            toastr("Import berhasil dilakukan.", 'success');
+            return redirect()->route('tiket.index');
+        } catch (\Exception $e) {
+            toastr('Import Gagal! ' . $e->getMessage(), 'error');
+            return redirect()->route('tiket.index');
+        }
     }
 }

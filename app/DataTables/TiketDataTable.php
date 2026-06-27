@@ -77,6 +77,17 @@ class TiketDataTable extends DataTable
                     </select>
                     </div>
                     <div class="col-12 mb-4">
+                    <label for="suspect_problem" class="form-label float-start">Suspect Problem</label>
+                    <select id="suspect_problem" name="suspect_problem" class="form-control">
+                        <option value="Activity" ' . ($row->suspect_problem == 'Activity' ? 'selected' : '') . '>Activity</option>
+                        <option value="Dismantle" ' . ($row->suspect_problem == 'Dismantle' ? 'selected' : '') . '>Dismantle</option>
+                        <option value="Comcase" ' . ($row->suspect_problem == 'Comcase' ? 'selected' : '') . '>Comcase</option>
+                        <option value="Transmisi" ' . ($row->suspect_problem == 'Transmisi' ? 'selected' : '') . '>Transmisi</option>
+                        <option value="Power" ' . ($row->suspect_problem == 'Power' ? 'selected' : '') . '>Power</option>
+                    </select>
+                    </div>
+                    <div class="col-12 mb-4">
+
                     <label for="status_ticket" class="form-label float-start">Status Ticket</label>
                     <select id="status_ticket" name="status_ticket" class="form-control">
                         <option value="Open"  '.($row->status_ticket == 'Open'  ? 'selected' : '').'>Open</option>
@@ -107,21 +118,30 @@ class TiketDataTable extends DataTable
             </div>
                 ';
             })
-            ->addColumn('time_down', function ($row) {
+            ->addColumn('durasi', function ($row) {
                 if ($row->time_down) {
                     try {
+                        $dtDown = null;
                         if (is_numeric($row->time_down)) {
-                            // Jika value berupa angka serial Excel
                             $serialDate = (float) $row->time_down;
-                            $epoch = 25569; // Excel epoch adalah 1900-01-01
-                            $date = Carbon::createFromTimestamp(($serialDate - $epoch) * 86400);
-                            return $date->format('d/m/Y H:i');
+                            $epoch = 25569;
+                            $dtDown = \Carbon\Carbon::createFromTimestampUTC(($serialDate - $epoch) * 86400)->setTimezone('Asia/Jakarta');
                         } else {
-                            // Jika sudah dalam format yang benar, langsung konversi dengan Carbon
-                            return Carbon::parse($row->time_down)->format('d/m/Y H:i');
+                            $dtDown = \Carbon\Carbon::parse($row->time_down)->setTimezone('Asia/Jakarta');
                         }
+                        
+                        $dtImport = $row->created_at ? \Carbon\Carbon::parse($row->created_at) : \Carbon\Carbon::now();
+                        
+                        $diff = $dtDown->diff($dtImport);
+                        $parts = [];
+                        if ($diff->d > 0) $parts[] = $diff->d . ' Hari';
+                        if ($diff->h > 0) $parts[] = $diff->h . ' Jam';
+                        if ($diff->i > 0) $parts[] = $diff->i . ' Mnt';
+                        
+                        return empty($parts) ? '< 1 Mnt' : implode(' ', $parts);
+                        
                     } catch (\Exception $e) {
-                        return Service::convertDate($row->time_down);
+                        return '-';
                     }
                 }
                 return '-';
@@ -138,7 +158,7 @@ class TiketDataTable extends DataTable
                 }
                 return '-';
             })
-            ->rawColumns(['time_down', 'action', 'select'])
+            ->rawColumns(['durasi', 'action', 'select'])
             ->setRowId('id');
     }
 
@@ -190,7 +210,7 @@ class TiketDataTable extends DataTable
             Column::make('site_id'),
             Column::make('saverity'),
             Column::make('suspect_problem'),
-            Column::computed('time_down'),
+            Column::computed('durasi')->title('Durasi'),
             Column::make('status_site'),
             Column::make('status_ticket'),
             Column::make('tim_fop'),
