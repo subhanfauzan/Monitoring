@@ -2,6 +2,23 @@
 
 @section('content')
     <style>
+        body.screenshot-mode .layout-menu {
+            display: none !important;
+        }
+        body.screenshot-mode .layout-navbar {
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            border-radius: 0 !important;
+            padding-left: 2rem !important;
+            padding-right: 2rem !important;
+        }
+        body.screenshot-mode .layout-page {
+            padding-left: 0 !important;
+            margin-left: 0 !important;
+        }
         body.screenshot-mode .action-buttons-container {
             display: none !important;
         }
@@ -62,14 +79,18 @@
             <div class="container mt-10">
                 <div class="card" style="overflow-x: scroll;">
                     <div class="card-header">
-                        <div class="col-12 mb-4">
+                        <div class="col-12 mb-4 action-buttons-container d-flex align-items-center">
                             <button type="button" data-bs-toggle="modal" class="btn btn-secondary waves-effect waves-light"
                                 data-bs-target="#basicModal">Tambah Data</button>
-                            <button type="button" data-bs-toggle="modal" class="btn btn-secondary waves-effect waves-light"
+                            <button type="button" data-bs-toggle="modal" class="btn btn-secondary waves-effect waves-light ms-2"
                                 data-bs-target="#exportmodal">Export / Import</button>
-                            <button type="button" class="btn btn-secondary waves-effect waves-light"
+                            <button type="button" class="btn btn-secondary waves-effect waves-light ms-2"
                                 data-nama="{{ $nop->nama_nop }}" onclick="confirmDeleteNop(this)">Hapus Data
                                 {{ $nop->nama_nop }}</button>
+                            <button type="button" class="btn bg-transparent border-0 shadow-none p-0 ms-auto"
+                                id="btn-screenshot" title="Screenshot">
+                                <i class="ti ti-camera fs-3 text-dark" style="color: #000 !important;"></i>
+                            </button>
                         </div>
                         
                         {{-- Chart Section (di bawah tombol) --}}
@@ -420,6 +441,25 @@
     {{ $dataTable->scripts(attributes: ['type' => 'module']) }}
     <script>
         $(document).ready(function() {
+            $('#btn-screenshot').on('click', function() {
+                var elem = document.documentElement;
+                if (elem.requestFullscreen) {
+                    elem.requestFullscreen();
+                } else if (elem.webkitRequestFullscreen) { /* Safari */
+                    elem.webkitRequestFullscreen();
+                } else if (elem.msRequestFullscreen) { /* IE11 */
+                    elem.msRequestFullscreen();
+                }
+            });
+
+            $(document).on('fullscreenchange webkitfullscreenchange msfullscreenchange', function() {
+                if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
+                    $('body').addClass('screenshot-mode');
+                } else {
+                    $('body').removeClass('screenshot-mode');
+                }
+            });
+
             window.confirmDelete = function(e) {
                 let id = e.getAttribute('data-id');
                 Swal.fire({
@@ -755,6 +795,29 @@
         (function() {
             const ctx = document.getElementById('tiketIssueChart');
             if(ctx) {
+                const customDataLabels = {
+                    id: 'customDataLabels',
+                    afterDatasetsDraw(chart, args, pluginOptions) {
+                        const { ctx, data } = chart;
+                        ctx.save();
+                        data.datasets.forEach((dataset, i) => {
+                            const meta = chart.getDatasetMeta(i);
+                            if (meta.hidden) return;
+                            meta.data.forEach((element, index) => {
+                                const value = dataset.data[index];
+                                if (value > 0) {
+                                    ctx.fillStyle = '#3b82f6';
+                                    ctx.font = 'bold 12px sans-serif';
+                                    ctx.textAlign = 'center';
+                                    ctx.textBaseline = 'bottom';
+                                    ctx.fillText(value, element.x, element.y - 8);
+                                }
+                            });
+                        });
+                        ctx.restore();
+                    }
+                };
+
                 new Chart(ctx.getContext('2d'), {
                     type: 'line',
                     data: {
@@ -802,7 +865,8 @@
                                 ticks: { font: { size: 10 } }
                             }
                         }
-                    }
+                    },
+                    plugins: [customDataLabels]
                 });
             }
         })();

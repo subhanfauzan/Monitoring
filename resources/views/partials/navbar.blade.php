@@ -18,7 +18,7 @@
         <ul class="navbar-nav flex-row align-items-center ms-auto">
             <!-- Logo Telkom & Telkomsel -->
             <li class="nav-item me-3 d-flex align-items-center gap-2 gap-md-4">
-                <img src="{{ asset('images/telkom.jpg') }}" alt="Telkom Infra" class="img-fluid" style="max-height: 80px; height: auto; object-fit: contain;">
+                <img src="{{ asset('images/telkom.png') }}" alt="Telkom Infra" class="img-fluid" style="max-height: 80px; height: auto; object-fit: contain;">
                 <img src="{{ asset('images/telkomsel.png') }}" alt="Telkomsel" class="img-fluid pl-3" style="max-height: 80px; height: auto; object-fit: contain;">
             </li>
         </ul>

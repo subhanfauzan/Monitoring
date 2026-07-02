@@ -240,6 +240,7 @@
     <!-- Laravel DataTables Integration -->
     @stack('scripts')
     @include('sweetalert::alert')
+    @include('partials.chat-widget')
   </body>
 </html>
 

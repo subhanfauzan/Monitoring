@@ -453,6 +453,29 @@
         (function() {
             const ctx = document.getElementById('tiketIssueChart');
             if(ctx) {
+                const customDataLabels = {
+                    id: 'customDataLabels',
+                    afterDatasetsDraw(chart, args, pluginOptions) {
+                        const { ctx, data } = chart;
+                        ctx.save();
+                        data.datasets.forEach((dataset, i) => {
+                            const meta = chart.getDatasetMeta(i);
+                            if (meta.hidden) return;
+                            meta.data.forEach((element, index) => {
+                                const value = dataset.data[index];
+                                if (value > 0) {
+                                    ctx.fillStyle = '#3b82f6';
+                                    ctx.font = 'bold 12px sans-serif';
+                                    ctx.textAlign = 'center';
+                                    ctx.textBaseline = 'bottom';
+                                    ctx.fillText(value, element.x, element.y - 8);
+                                }
+                            });
+                        });
+                        ctx.restore();
+                    }
+                };
+
                 new Chart(ctx.getContext('2d'), {
                     type: 'line',
                     data: {
@@ -500,7 +523,8 @@
                                 ticks: { font: { size: 10 } }
                             }
                         }
-                    }
+                    },
+                    plugins: [customDataLabels]
                 });
             }
         })();

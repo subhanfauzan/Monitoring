@@ -158,7 +158,21 @@ class TiketDataTable extends DataTable
                 }
                 return '-';
             })
-            ->rawColumns(['durasi', 'action', 'select'])
+            ->editColumn('status_site', function ($row) {
+                if (strtolower($row->status_site) === 'down') {
+                    return '<span class="badge bg-danger rounded-pill">Down</span>';
+                } elseif (strtolower($row->status_site) === 'up') {
+                    return '<span class="badge bg-success rounded-pill">Up</span>';
+                }
+                return $row->status_site;
+            })
+            ->orderColumn('durasi', function ($query, $order) {
+                // Sorting 'asc' for duration means shortest duration first (which is largest/newest time_down)
+                // Sorting 'desc' for duration means longest duration first (which is smallest/oldest time_down)
+                $direction = strtolower($order) === 'asc' ? 'desc' : 'asc';
+                $query->orderBy('time_down', $direction);
+            })
+            ->rawColumns(['durasi', 'action', 'select', 'status_site'])
             ->setRowId('id');
     }
 
@@ -210,7 +224,7 @@ class TiketDataTable extends DataTable
             Column::make('site_id'),
             Column::make('saverity'),
             Column::make('suspect_problem'),
-            Column::computed('durasi')->title('Durasi'),
+            Column::make('durasi')->title('Durasi')->orderable(true)->searchable(false),
             Column::make('status_site'),
             Column::make('status_ticket'),
             Column::make('tim_fop'),

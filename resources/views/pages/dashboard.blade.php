@@ -2,6 +2,30 @@
 
 @section('content')
 <style>
+    body.screenshot-mode .layout-menu {
+        display: none !important;
+    }
+    body.screenshot-mode .layout-navbar {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        border-radius: 0 !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+    body.screenshot-mode .layout-page {
+        padding-left: 0 !important;
+        margin-left: 0 !important;
+    }
+    body.screenshot-mode .action-buttons-container {
+        display: none !important;
+    }
+    body.screenshot-mode footer {
+        display: none !important;
+    }
+
     /* ========== Dashboard Custom Styles ========== */
     .dashboard-title {
         font-size: 1.5rem;
@@ -286,12 +310,17 @@
 
 <div class="flex-grow-1 container-p-y dashboard-wrapper">
 
-
-
     {{-- ======= DOWN BY SITE CLASS ======= --}}
     <div class="card chart-card mb-4 mt-4">
         <div class="card-body">
-            <span class="section-header">⬇ Down By Site Class</span>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <span class="section-header mb-0">⬇ Down By Site Class</span>
+                <div class="action-buttons-container">
+                    <button type="button" class="btn bg-transparent border-0 shadow-none p-0" id="btn-screenshot" title="Screenshot">
+                        <i class="ti ti-camera fs-3 text-dark" style="color: #000 !important;"></i>
+                    </button>
+                </div>
+            </div>
             <div class="row g-2 g-md-3">
 
                 {{-- Total --}}
@@ -540,6 +569,27 @@
 
 @push('scripts')
 <script>
+    $(document).ready(function() {
+        $('#btn-screenshot').on('click', function() {
+            var elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen();
+            } else if (elem.webkitRequestFullscreen) { /* Safari */
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) { /* IE11 */
+                elem.msRequestFullscreen();
+            }
+        });
+
+        $(document).on('fullscreenchange webkitfullscreenchange msfullscreenchange', function() {
+            if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
+                $('body').addClass('screenshot-mode');
+            } else {
+                $('body').removeClass('screenshot-mode');
+            }
+        });
+    });
+
     // ======= LINE CHART: Distribusi per Jam =======
     (function() {
         const ctx = document.getElementById('severityLineChart').getContext('2d');
