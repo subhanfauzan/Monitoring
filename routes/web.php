@@ -76,6 +76,10 @@ Route::middleware('auth')->group(function () {
         return view('pages.chat');
     });
 
+    Route::get('/percakapanbaru', function () {
+        return view('pages.percakapanbaru');
+    })->name('percakapanbaru');
+
     Route::post('/chat/ask', [ChatController::class, 'askQuestion'])->name('chat.ask');
     Route::post('/chat/execute/{id}', [ChatController::class, 'executeReview']);
     Route::post('/gemini/ask', [GeminiChatController::class, 'askQuestion'])->name('gemini.ask');

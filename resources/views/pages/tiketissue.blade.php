@@ -2,10 +2,10 @@
 
 @section('content')
     <style>
-        body.screenshot-mode .layout-menu {
+        body.screenshot-chart .layout-menu, body.screenshot-table .layout-menu {
             display: none !important;
         }
-        body.screenshot-mode .layout-navbar {
+        body.screenshot-chart .layout-navbar, body.screenshot-table .layout-navbar {
             width: 100% !important;
             max-width: 100% !important;
             margin: 0 !important;
@@ -15,16 +15,20 @@
             padding-left: 2rem !important;
             padding-right: 2rem !important;
         }
-        body.screenshot-mode .layout-page {
+        body.screenshot-chart .layout-page, body.screenshot-table .layout-page {
             padding-left: 0 !important;
             margin-left: 0 !important;
         }
-        body.screenshot-mode .action-buttons-container {
+        body.screenshot-chart .action-buttons-container, body.screenshot-table .action-buttons-container {
             display: none !important;
         }
-        body.screenshot-mode footer {
+        body.screenshot-chart footer, body.screenshot-table footer {
             display: none !important;
         }
+        body.screenshot-chart #datatable-container { display: none !important; }
+        body.screenshot-table #chart-container { display: none !important; }
+        body.screenshot-table table.dataTable th:last-child, 
+        body.screenshot-table table.dataTable td:last-child { display: none !important; }
 
         /* ========== Dashboard Custom Styles for Charts ========== */
         .chart-card {
@@ -94,7 +98,7 @@
                         </div>
                         
                         {{-- Chart Section (di bawah tombol) --}}
-                        <div class="row w-100 m-0 mt-4">
+                        <div class="row w-100 m-0 mt-4" id="chart-container">
                             <div class="col-12 col-lg-8 mb-4">
                                 <div class="chart-card h-100">
                                     <div class="card-header-custom">
@@ -136,7 +140,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="datatable-container">
                         {{ $dataTable->table() }}
                         <div class="d-flex justify-content-end mt-3 pe-3">
                             <form id="bulk-edit-form" method="POST" action="{{ route('tiket.bulk-update') }}"
@@ -441,7 +445,24 @@
     {{ $dataTable->scripts(attributes: ['type' => 'module']) }}
     <script>
         $(document).ready(function() {
+            let currentScreenshotMode = '';
+
             $('#btn-screenshot').on('click', function() {
+                currentScreenshotMode = 'screenshot-chart';
+                enterFullscreen();
+            });
+
+            $(document).on('init.dt', function(e, settings) {
+                let btnHtml = '<button type="button" class="btn btn-sm bg-transparent shadow-none" id="btn-screenshot-table" title="Screenshot Data Table" style="margin-left:10px;"><i class="ti ti-camera fs-4 text-dark" style="color: #000 !important;"></i></button>';
+                $('.dataTables_filter').append(btnHtml);
+            });
+
+            $(document).on('click', '#btn-screenshot-table', function() {
+                currentScreenshotMode = 'screenshot-table';
+                enterFullscreen();
+            });
+
+            function enterFullscreen() {
                 var elem = document.documentElement;
                 if (elem.requestFullscreen) {
                     elem.requestFullscreen();
@@ -450,13 +471,16 @@
                 } else if (elem.msRequestFullscreen) { /* IE11 */
                     elem.msRequestFullscreen();
                 }
-            });
+            }
 
             $(document).on('fullscreenchange webkitfullscreenchange msfullscreenchange', function() {
                 if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
-                    $('body').addClass('screenshot-mode');
+                    if (currentScreenshotMode) {
+                        $('body').addClass(currentScreenshotMode);
+                    }
                 } else {
-                    $('body').removeClass('screenshot-mode');
+                    $('body').removeClass('screenshot-chart screenshot-table');
+                    currentScreenshotMode = '';
                 }
             });
 

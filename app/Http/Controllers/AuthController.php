@@ -39,7 +39,7 @@ class AuthController extends Controller
 
         if (Auth::attempt($credential)) {
             toastr('Login Berhasil!', 'success');
-            return redirect()->route('utama');
+            return redirect()->route('percakapanbaru');
         }
 
         toastr('Email / password salah!', 'error');

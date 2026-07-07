@@ -323,8 +323,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const bubble = document.createElement('div');
         bubble.className = `chat-bubble ${sender}`;
         
-        // Render text preserving line breaks
-        bubble.innerHTML = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+        // Render text preserving line breaks and basic markdown (bold)
+        let formattedText = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n/g, '<br>');
+            
+        bubble.innerHTML = formattedText;
         
         chatBody.appendChild(bubble);
         chatBody.scrollTop = chatBody.scrollHeight;

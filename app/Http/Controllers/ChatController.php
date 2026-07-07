@@ -148,7 +148,8 @@ class ChatController extends Controller
         KETENTUAN WAJIB
         1) Hanya boleh SELECT dari tabel daftar_tiket (tanpa CTE, tanpa menulis ke tabel lain).
         2) Selalu tambahkan LIMIT 50 di akhir.
-        3) Bandingkan string dengan LOWER(...).
+        3) JANGAN gunakan SELECT *. Secara default gunakan SELECT site_id, nop, suspect_problem, time_down, ticket_swfm kecuali user meminta kolom spesifik.
+        4) Bandingkan string dengan LOWER(...).
         4) Tanggal:
            - "hari ini"   -> DATE(created_at) = CURDATE()
            - "bulan ini"  -> MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE())
@@ -166,9 +167,9 @@ class ChatController extends Controller
 
         CONTOH
         - "site down hari ini"
-          -> {"sql":"SELECT * FROM daftar_tiket WHERE LOWER(status_site)='down' AND DATE(created_at)=CURDATE() LIMIT 50"}
+          -> {"sql":"SELECT site_id, nop, suspect_problem, time_down, ticket_swfm FROM daftar_tiket WHERE LOWER(status_site)='down' AND DATE(created_at)=CURDATE() LIMIT 50"}
         - "masalah power bulan ini"
-          -> {"sql":"SELECT * FROM daftar_tiket WHERE LOWER(suspect_problem) LIKE '%power%' AND MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE()) LIMIT 50"}
+          -> {"sql":"SELECT site_id, nop, suspect_problem, time_down, ticket_swfm FROM daftar_tiket WHERE LOWER(suspect_problem) LIKE '%power%' AND MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE()) LIMIT 50"}
         - "berapa banyak gangguan di NOP SURABAYA minggu ini"
           -> {"sql":"SELECT COUNT(*) AS total FROM daftar_tiket WHERE LOWER(nop) LIKE '%surabaya%' AND YEARWEEK(created_at)=YEARWEEK(CURDATE()) LIMIT 50"}
 
@@ -266,6 +267,11 @@ class ChatController extends Controller
         ]);
 
         try {
+            // Force DISTINCT to avoid duplicate rows
+            if (preg_match('/^\s*SELECT\s+/i', $sqlQuery) && !preg_match('/^\s*SELECT\s+DISTINCT\s+/i', $sqlQuery)) {
+                $sqlQuery = preg_replace('/^\s*SELECT\s+/i', 'SELECT DISTINCT ', $sqlQuery);
+            }
+
             Log::info('Executing SQL directly (GPT): ' . $sqlQuery);
 
             $results = DB::select($sqlQuery);
@@ -292,31 +298,26 @@ class ChatController extends Controller
                 $answer = "Berikut adalah hasil pencarian data tiket:\n\n";
 
                 $preferredOrder = [
-                    'site_id', 'status_site', 'status_ticket',
-                    'suspect_problem', 'site_class', 'saverity',
-                    'nop', 'cluster_to', 'time_down', 'tim_fop',
-                    'remark', 'ticket_swfm', 'nossa'
+                    'site_id', 'nop', 'suspect_problem', 'time_down', 'ticket_swfm'
                 ];
 
                 $maxShow = min(10, count($results));
                 for ($i = 0; $i < $maxShow; $i++) {
                     $row = (array) $results[$i];
+                    $num = $i + 1;
+                    $lineItems = [];
 
                     foreach ($preferredOrder as $k) {
                         if (array_key_exists($k, $row)) {
-                            $label = $this->getColumnLabel($k);
+                            $label = strtoupper($this->getColumnLabel($k));
                             $val = $row[$k] ?? '';
                             
                             if ($k === 'time_down' && is_numeric($val)) {
                                 $unixTime = ($val - 25569) * 86400;
-                                $val = gmdate("Y-m-d H:i:s", (int)$unixTime);
+                                $val = gmdate("d M Y H i s", (int)$unixTime);
                             }
                             
-                            if ($k === 'site_id') {
-                                $answer .= " Site ID: " . $val . "\n";
-                            } else {
-                                $answer .= "• $label: " . $val . "\n";
-                            }
+                            $lineItems[] = "**{$label}**: {$val}";
                             unset($row[$k]);
                         }
                     }
@@ -324,11 +325,11 @@ class ChatController extends Controller
                     unset($row['id'], $row['created_at'], $row['updated_at']);
 
                     foreach ($row as $key => $value) {
-                        $label = $this->getColumnLabel($key);
-                        $answer .= "• $label: " . ($value ?? '') . "\n";
+                        $label = strtoupper($this->getColumnLabel($key));
+                        $lineItems[] = "**{$label}**: " . ($value ?? '');
                     }
 
-                    $answer .= "\n";
+                    $answer .= "{$num}. " . implode(' | ', $lineItems) . "\n\n";
                 }
 
                 if (count($results) > $maxShow) {
@@ -407,6 +408,11 @@ class ChatController extends Controller
         }
 
         try {
+            // Force DISTINCT to avoid duplicate rows
+            if (preg_match('/^\s*SELECT\s+/i', $sqlQuery) && !preg_match('/^\s*SELECT\s+DISTINCT\s+/i', $sqlQuery)) {
+                $sqlQuery = preg_replace('/^\s*SELECT\s+/i', 'SELECT DISTINCT ', $sqlQuery);
+            }
+
             Log::info('Executing SQL from review #' . $review->id . ': ' . $sqlQuery);
 
             $results = DB::select($sqlQuery);
@@ -418,31 +424,26 @@ class ChatController extends Controller
                 $answer = "Berikut adalah hasil pencarian data tiket:\n\n";
 
                 $preferredOrder = [
-                    'site_id', 'status_site', 'status_ticket',
-                    'suspect_problem', 'site_class', 'saverity',
-                    'nop', 'cluster_to', 'time_down', 'tim_fop',
-                    'remark', 'ticket_swfm', 'nossa'
+                    'site_id', 'nop', 'suspect_problem', 'time_down', 'ticket_swfm'
                 ];
 
                 $maxShow = min(10, count($results));
+                $headerBuilt = false;
+
                 for ($i = 0; $i < $maxShow; $i++) {
                     $row = (array) $results[$i];
+                    $rowCols = [];
 
                     foreach ($preferredOrder as $k) {
                         if (array_key_exists($k, $row)) {
-                            $label = $this->getColumnLabel($k);
                             $val = $row[$k] ?? '';
                             
                             if ($k === 'time_down' && is_numeric($val)) {
                                 $unixTime = ($val - 25569) * 86400;
-                                $val = gmdate("Y-m-d H:i:s", (int)$unixTime);
+                                $val = gmdate("d M Y H i s", (int)$unixTime);
                             }
                             
-                            if ($k === 'site_id') {
-                                $answer .= " Site ID: " . $val . "\n";
-                            } else {
-                                $answer .= "• $label: " . $val . "\n";
-                            }
+                            $rowCols[$k] = $val;
                             unset($row[$k]);
                         }
                     }
@@ -450,15 +451,23 @@ class ChatController extends Controller
                     unset($row['id'], $row['created_at'], $row['updated_at']);
 
                     foreach ($row as $key => $value) {
-                        $label = $this->getColumnLabel($key);
-                        $answer .= "• $label: " . ($value ?? '') . "\n";
+                        $rowCols[$key] = $value;
                     }
 
-                    $answer .= "\n";
+                    if (!$headerBuilt) {
+                        $headers = array_map(function($k) { return strtoupper($this->getColumnLabel($k)); }, array_keys($rowCols));
+                        $answer .= "| " . implode(" | ", $headers) . " |\n";
+                        $answer .= "| " . implode(" | ", array_fill(0, count($headers), "---")) . " |\n";
+                        $headerBuilt = true;
+                    }
+
+                    $values = array_values($rowCols);
+                    $values = array_map(function($v) { return str_replace('|', '&#124;', $v ?? ''); }, $values);
+                    $answer .= "| " . implode(" | ", $values) . " |\n";
                 }
 
                 if (count($results) > $maxShow) {
-                    $answer .= '... dan ' . (count($results) - $maxShow) . " baris lainnya.\n";
+                    $answer .= "\n*... dan " . (count($results) - $maxShow) . " baris lainnya.*\n";
                 }
             }
 
@@ -500,20 +509,7 @@ class ChatController extends Controller
             'site_id'        => 'Site ID',
             'site_class'     => 'Kelas Site',
             'saverity'       => 'Tingkat Keparahan',
-            'suspect_problem'=> 'Kategori Masalah',
-            'time_down'      => 'Waktu Down',
-            'status_site'    => 'Status Site',
-            'status_ticket'  => 'Status Ticket',
-            'tim_fop'        => 'Tim FOP',
-            'remark'         => 'Catatan',
-            'ticket_swfm'    => 'Tiket SWFM',
-            'nop'            => 'NOP',
-            'cluster_to'     => 'Cluster',
-            'nossa'          => 'Nossa',
-            'created_at'     => 'Dibuat Pada',
-            'updated_at'     => 'Diupdate Pada',
+            'suspect_problem'=> 'Kategori',
         ];
-
-        return $labels[$columnName] ?? ucfirst(str_replace('_', ' ', $columnName));
     }
 }

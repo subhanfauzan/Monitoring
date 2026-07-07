@@ -15,7 +15,7 @@
 
 <html
   lang="en"
-  class="light-style layout-navbar-fixed layout-menu-fixed layout-compact"
+  class="light-style layout-navbar-fixed layout-menu-fixed layout-menu-collapsed layout-compact"
   dir="ltr"
   data-theme="theme-semi-dark"
   data-assets-path="{{ asset('') }}template/assets/"
@@ -240,7 +240,6 @@
     <!-- Laravel DataTables Integration -->
     @stack('scripts')
     @include('sweetalert::alert')
-    @include('partials.chat-widget')
   </body>
 </html>
 

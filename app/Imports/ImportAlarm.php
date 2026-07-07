@@ -10,6 +10,9 @@ use Illuminate\Support\Str;
 
 class ImportAlarm implements ToModel, WithHeadingRow
 {
+    public $insertedCount = 0;
+    public $skippedCount = 0;
+
     /**
      * Tentukan baris mana yang menjadi header (baris ke-6)
      */
@@ -46,9 +49,11 @@ class ImportAlarm implements ToModel, WithHeadingRow
             ->exists();
 
         if ($exists) {
+            $this->skippedCount++;
             return null; // Skip insert
         }
 
+        $this->insertedCount++;
         return new Tiket([
             'site_id'         => $moName,
             'site_class'      => '-',

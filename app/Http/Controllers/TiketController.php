@@ -374,35 +374,48 @@ class TiketController extends Controller
 
     public function import(Request $request)
     {
-        $request->validate([
-            'file' => 'required|mimes:csv,xls,xlsx',
-        ]);
+        try {
+            $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                'file' => 'required',
+            ]);
 
-        $file = $request->file('file');
+            if ($validator->fails()) {
+                toastr('Validasi Gagal: File wajib diupload.', 'error');
+                return redirect()->back();
+            }
 
-        // membuat nama file unik
-        $nama_file = $file->hashName();
+            $file = $request->file('file');
+            if (!$file->isValid()) {
+                toastr('File upload gagal atau terlalu besar.', 'error');
+                return redirect()->back();
+            }
 
-        //temporary file
+            $nama_file = $file->hashName();
+            $path = $file->storeAs('excel', $nama_file, 'public');
 
-        $path = $file->storeAs('excel', $nama_file, 'public');
+            $import = Excel::import(new ImportTiket(), public_path('storage/excel/' . $nama_file));
+            Storage::delete($path);
 
-        $import = Excel::import(new ImportTiket(), public_path('storage/excel/' . $nama_file));
-
-        //remove from server
-        Storage::delete($path);
-
-        if ($import) {
-            //redirect
-            // dd($file, $nama_file, $path);
-            toastr('Data Berhasil Ditambahkan!', 'success');
-            return redirect()->route('tiket.index');
-        } else {
-            //redirect
-            // dd($file, $nama_file, $path);
-
-            toastr('Data Gagal Ditambahkan!', 'error');
-            return redirect()->route('tiket.index');
+            if ($import) {
+                if ($request->ajax()) {
+                    return response()->json(['success' => true, 'message' => 'Data Berhasil Ditambahkan!']);
+                }
+                toastr('Data Berhasil Ditambahkan!', 'success');
+            } else {
+                if ($request->ajax()) {
+                    return response()->json(['success' => false, 'message' => 'Data Gagal Ditambahkan!']);
+                }
+                toastr('Data Gagal Ditambahkan!', 'error');
+            }
+            
+            return redirect()->back();
+        } catch (\Throwable $e) {
+            if (isset($path)) Storage::delete($path);
+            if ($request->ajax()) {
+                return response()->json(['success' => false, 'message' => 'Terjadi Kesalahan: ' . $e->getMessage()], 500);
+            }
+            toastr('Terjadi Kesalahan: ' . $e->getMessage(), 'error');
+            return redirect()->back();
         }
     }
 
@@ -455,21 +468,41 @@ class TiketController extends Controller
 
     public function importAlarm(Request $request)
     {
-        $request->validate([
-            'file' => 'required|mimes:csv,xls,xlsx',
-        ]);
-
-        $file = $request->file('file');
-        $nama_file = rand() . $file->getClientOriginalName();
-        $file->move('storage/excel', $nama_file);
-
         try {
-            \Maatwebsite\Excel\Facades\Excel::import(new ImportAlarm(), public_path('storage/excel/' . $nama_file));
-            toastr("Import berhasil dilakukan.", 'success');
-            return redirect()->route('tiket.index');
-        } catch (\Exception $e) {
+            $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                'file' => 'required',
+            ]);
+
+            if ($validator->fails()) {
+                toastr('Validasi Gagal: File wajib diupload.', 'error');
+                return redirect()->back();
+            }
+
+            $file = $request->file('file');
+            if (!$file->isValid()) {
+                toastr('File upload gagal atau terlalu besar.', 'error');
+                return redirect()->back();
+            }
+
+            $nama_file = rand() . '_' . $file->getClientOriginalName();
+            $path = $file->storeAs('excel', $nama_file, 'public');
+
+            $importInstance = new ImportAlarm();
+            \Maatwebsite\Excel\Facades\Excel::import($importInstance, public_path('storage/excel/' . $nama_file));
+            \Illuminate\Support\Facades\Storage::delete($path);
+            if ($request->ajax()) {
+                return response()->json(['success' => true, 'message' => "Import Selesai: {$importInstance->insertedCount} data baru ditambahkan, {$importInstance->skippedCount} dilewati (duplikat)."]);
+            }
+            
+            toastr("Import Selesai: {$importInstance->insertedCount} data baru ditambahkan, {$importInstance->skippedCount} dilewati (duplikat).", 'success');
+            return redirect()->back();
+        } catch (\Throwable $e) {
+            if (isset($path)) \Illuminate\Support\Facades\Storage::delete($path);
+            if ($request->ajax()) {
+                return response()->json(['success' => false, 'message' => 'Import Gagal! ' . $e->getMessage()], 500);
+            }
             toastr('Import Gagal! ' . $e->getMessage(), 'error');
-            return redirect()->route('tiket.index');
+            return redirect()->back();
         }
     }
 }
